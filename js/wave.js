@@ -68,7 +68,9 @@ class WaveManager {
     const bonus = 30 + this.current * 5;
     game.inventory.gold += bonus;
     game.stats.recordGoldEarned(bonus);
-    game.player.skillPoints += 1;
+    // 技能點：每 3 波才 +1（之前每波都給太多）
+    const endedWave = this.current - 1;
+    if (endedWave % 3 === 0) game.player.skillPoints += 1;
     game.player.hp = Math.min(game.player.maxHp, game.player.hp + 30);
     game.player.mp = Math.min(game.player.maxMp, game.player.mp + 40);
     game.score += 100;
@@ -85,7 +87,9 @@ class WaveManager {
     const bonus = 30 + this.current * 5;
     game.inventory.gold += bonus;
     game.stats.recordGoldEarned(bonus);
-    game.player.skillPoints += 1;
+    // 技能點：每 3 波才 +1
+    const endedWave = this.current - 1;
+    if (endedWave % 3 === 0) game.player.skillPoints += 1;
     game.player.hp = Math.min(game.player.maxHp, game.player.hp + 30);
     game.player.mp = Math.min(game.player.maxMp, game.player.mp + 40);
     game.score += 100;

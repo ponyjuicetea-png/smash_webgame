@@ -49,6 +49,11 @@ class Player {
     this.invisTimer = 0;
     this.speedBuffMult = 1; this.speedBuffEnd = 0;
     this.furyAura = 0;
+    // 黑靈狂戰士
+    this.darkSoulActive = false; this.darkSoulEnd = 0;
+    this.frenzyActive = false; this.frenzyEnd = 0;
+    // 弓手 冰巨箭
+    this.iceArrowActive = false; this.iceArrowEnd = 0;
     this.shopUpgrades = { maxHp: 0, maxMp: 0, attack: 0, defense: 0 };
 
     this.walkPhase = 0;
@@ -104,6 +109,58 @@ class Player {
     const now = performance.now() / 1000;
     if (this.attackBuffEnd && now > this.attackBuffEnd) { this.attackBuff = 0; this.attackBuffEnd = 0; }
     if (this.speedBuffEnd && now > this.speedBuffEnd) { this.speedBuffMult = 1; this.speedBuffEnd = 0; }
+    if (this.darkSoulEnd && now > this.darkSoulEnd) { this.darkSoulActive = false; this.darkSoulEnd = 0; }
+    if (this.frenzyEnd && now > this.frenzyEnd) { this.frenzyActive = false; this.frenzyEnd = 0; }
+    if (this.iceArrowEnd && now > this.iceArrowEnd) { this.iceArrowActive = false; this.iceArrowEnd = 0; }
+
+    // 冰巨箭：周身冰晶霧
+    if (this.iceArrowActive && Math.random() < dt * 18) {
+      const a = Math.random() * Math.PI * 2;
+      const r = 20 + Math.random() * 10;
+      game.particles.add({
+        x: this.x + Math.cos(a) * r, y: this.y + Math.sin(a) * r,
+        vx: -Math.sin(a) * 30, vy: Math.cos(a) * 30 - 20,
+        life: 0.7, max: 0.7, color: Utils.pick(['#aaccff', '#fff', '#88aaff']),
+        size: Utils.randomRange(3, 5), type: 'fire', grow: -3
+      });
+    }
+    if (this.iceArrowActive && Math.random() < dt * 6) {
+      game.particles.add({
+        x: this.x + Utils.jitter(18), y: this.y + Utils.jitter(18),
+        vx: Utils.jitter(20), vy: Utils.jitter(20),
+        life: 0.5, max: 0.5, color: '#fff', size: 3,
+        type: 'iceShard', angle: Math.random() * Math.PI * 2
+      });
+    }
+
+    // 黑魂附體：圍繞玩家的黑紫邪氣
+    if (this.darkSoulActive && Math.random() < dt * 14) {
+      const a = Math.random() * Math.PI * 2;
+      const r = 24;
+      game.particles.add({
+        x: this.x + Math.cos(a) * r, y: this.y + Math.sin(a) * r,
+        vx: -Math.sin(a) * 30, vy: Math.cos(a) * 30 - 20,
+        life: 0.6, max: 0.6, color: Utils.pick(['#3a0a3a', '#5a0a5a', '#0a000a']),
+        size: Utils.randomRange(3, 5), type: 'fire', grow: -3
+      });
+    }
+    // 狂熱：血紅霧氣
+    if (this.frenzyActive && Math.random() < dt * 18) {
+      game.particles.add({
+        x: this.x + Utils.jitter(20), y: this.y + Utils.jitter(15),
+        vx: Utils.jitter(15), vy: -Utils.randomRange(25, 60),
+        life: 0.5, max: 0.5, color: Utils.pick(['#cc3030', '#ff3030', '#aa0000']),
+        size: Utils.randomRange(3, 5), type: 'fire', grow: -3
+      });
+    }
+    // 狂熱移動殘影（在 moving 變數計算後仍可呼叫）
+    if (this.frenzyActive) {
+      this.lastTrail -= dt;
+      if (this.lastTrail <= 0) {
+        this.lastTrail = 0.06;
+        game.particles.dashTrail(this.x, this.y, 'rgba(204,48,48,0.35)');
+      }
+    }
 
     // 飢餓（受 mut.hungerMult 影響）
     const hgMult = (game.mut?.hungerMult) || 1;
@@ -154,7 +211,7 @@ class Player {
       AudioMgr.swing();
     }
 
-    let sp = this.speed * (this.speedBuffMult || 1);
+    let sp = this.speed * (this.speedBuffMult || 1) * (this.frenzyActive ? 1.3 : 1);
     if (this.dashTime > 0) {
       sp = this.dashSpeed;
       this.dashTime -= dt;
@@ -183,7 +240,7 @@ class Player {
     const w = WEAPONS[this.currentWeapon];
     if (this.stamina < w.staminaCost) { Utils.toast('體力不足'); AudioMgr.deny(); return; }
     this.stamina -= w.staminaCost;
-    const atkSpeedMult = (this.classMods.attackSpeedMult || 1) * (game.mut?.attackSpeedMult || 1);
+    const atkSpeedMult = (this.classMods.attackSpeedMult || 1) * (game.mut?.attackSpeedMult || 1) * (this.frenzyActive ? 0.5 : 1);
     this.attackCooldown = w.cooldown * atkSpeedMult;
     this.attackEffectTime = 0.15;
     this.swingProgress = 1;
@@ -193,17 +250,192 @@ class Player {
     const buff = 1 + (this.attackBuff || 0);
     const invisBoost = (this.invisTimer > 0 && game.mut?.invisBoost) ? 1.8 : 1;
     if (w.type === 'ranged') {
-      const sx = this.x + Math.cos(this.facing) * (this.radius + 6);
-      const sy = this.y + Math.sin(this.facing) * (this.radius + 6);
+      const sx = this.x + Math.cos(this.facing) * (this.radius + 10);
+      const sy = this.y + Math.sin(this.facing) * (this.radius + 10);
       const rngMult = (this.classMods.rangedMult || 1);
       const dmg = (w.damage + this.attack * 0.3) * rngMult * buff * invisBoost;
-      game.projectiles.push(new Projectile(sx, sy, this.facing, w.projectileSpeed, dmg, 'player', 'arrow'));
-      game.particles.muzzleFlash(sx, sy, this.facing, '#fff066');
-      game.shake(2, 0.08);
-      AudioMgr.bowShoot();
+
+      // ===== 法師杖（隕石/焚天/創世）：可怕魔粒子 =====
+      if (w.projectileKind && w.projectileKind.startsWith('eldritch')) {
+        const p = new Projectile(sx, sy, this.facing, w.projectileSpeed, dmg * 1.4, 'player', w.projectileKind);
+        p.pierce = w.projectileKind === 'eldritchVoid' ? 2 : 0;
+        game.projectiles.push(p);
+        // 杖端閃光（依武器顏色）
+        const flashColor = w.projectileKind === 'eldritchVoid' ? '#aa00ff'
+                        : w.projectileKind === 'eldritchFire' ? '#ff5030'
+                        : '#cc00ff';
+        game.particles.muzzleFlash(sx, sy, this.facing, flashColor);
+        // 額外觸鬚噴射
+        for (let i = 0; i < 6; i++) {
+          const a = this.facing + Utils.jitter(0.7);
+          const sp2 = Utils.randomRange(100, 200);
+          game.particles.add({
+            x: sx, y: sy,
+            vx: Math.cos(a) * sp2, vy: Math.sin(a) * sp2,
+            life: 0.5, max: 0.5, color: flashColor,
+            size: Utils.randomRange(3, 5), type: 'fire', grow: -6
+          });
+        }
+        game.shake(w.projectileKind === 'eldritchVoid' ? 5 : 3, 0.15);
+        AudioMgr.fireball();
+        return;
+      }
+      // ===== 弓手 stormBow：3 連射 =====
+      if (w.multiShot) {
+        for (let i = 0; i < w.multiShot; i++) {
+          const off = (i - (w.multiShot - 1) / 2) * 0.18;
+          const ang = this.facing + off;
+          const sx2 = this.x + Math.cos(ang) * (this.radius + 10);
+          const sy2 = this.y + Math.sin(ang) * (this.radius + 10);
+          const p = new Projectile(sx2, sy2, ang, w.projectileSpeed, dmg * 1.2, 'player', 'giantarrow');
+          p.radius = 11;
+          p.pierce = 1;
+          if (w.alwaysIce || this.iceArrowActive) {
+            p.iceArrow = true; p.radius = 24; p.pierce = 99; p.freezeOnHit = 2.0;
+          }
+          game.projectiles.push(p);
+          game.particles.muzzleFlash(sx2, sy2, ang, '#88ccff');
+        }
+        game.shake(5, 0.18);
+        AudioMgr.bowShoot();
+        return;
+      }
+      // ===== 弓手 frostBow：自動冰巨箭 =====
+      if (w.alwaysIce) {
+        const p = new Projectile(sx, sy, this.facing, w.projectileSpeed * 0.85, dmg * 1.8, 'player', 'giantarrow');
+        p.iceArrow = true;
+        p.radius = 28;
+        p.pierce = 99;
+        p.freezeOnHit = 2.5;
+        game.projectiles.push(p);
+        game.particles.muzzleFlash(sx, sy, this.facing, '#aaccff');
+        game.particles.add({ x: sx, y: sy, vx:0, vy:0, life:0.3, max:0.3, color:'#fff', size:60, type:'flash' });
+        game.shake(7, 0.22);
+        AudioMgr.bowShoot();
+        AudioMgr.shockwave();
+        return;
+      }
+
+      if (this.currentWeapon === 'giantbow') {
+        // ===== 巨弓射箭 =====
+        if (this.iceArrowActive) {
+          // 冰巨箭：5 倍大、貫穿、命中凍結 2.5 秒
+          const p = new Projectile(sx, sy, this.facing, w.projectileSpeed * 0.82, dmg * 2.4, 'player', 'giantarrow');
+          p.iceArrow = true;
+          p.radius = 28;
+          p.pierce = 99;
+          p.freezeOnHit = 2.5;
+          game.projectiles.push(p);
+          // 出口超強冰爆
+          game.particles.muzzleFlash(sx, sy, this.facing, '#aaccff');
+          game.particles.add({
+            x: sx, y: sy, vx: 0, vy: 0,
+            life: 0.4, max: 0.4, color: '#fff', size: 90, type: 'flash'
+          });
+          // 冰晶四射
+          for (let i = 0; i < 14; i++) {
+            const a = this.facing + Utils.jitter(0.8);
+            const sp = Utils.randomRange(140, 280);
+            game.particles.add({
+              x: sx, y: sy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+              life: 0.55, max: 0.55, color: '#aaccff',
+              size: Utils.randomRange(4, 8), type: 'iceShard', angle: a
+            });
+          }
+          // 前方擴張震波
+          game.particles.add({
+            x: sx + Math.cos(this.facing) * 30,
+            y: sy + Math.sin(this.facing) * 30,
+            vx: 0, vy: 0,
+            life: 0.5, max: 0.5, color: '#aaccff',
+            size: 30, type: 'ring', targetRadius: 130
+          });
+          game.shake(9, 0.3);
+          AudioMgr.bowShoot();
+          AudioMgr.shockwave();
+        } else {
+          // 普通巨箭：1.8 倍大、金色
+          const p = new Projectile(sx, sy, this.facing, w.projectileSpeed, dmg * 1.3, 'player', 'giantarrow');
+          p.radius = 11;
+          p.pierce = 1;
+          game.projectiles.push(p);
+          game.particles.muzzleFlash(sx, sy, this.facing, '#ffd86b');
+          game.particles.spark(sx, sy, 12, '#fff066');
+          game.shake(4, 0.13);
+          AudioMgr.bowShoot();
+        }
+      } else {
+        // 一般弓箭（其他職業）
+        game.projectiles.push(new Projectile(sx, sy, this.facing, w.projectileSpeed, dmg, 'player', 'arrow'));
+        game.particles.muzzleFlash(sx, sy, this.facing, '#fff066');
+        game.shake(2, 0.08);
+        AudioMgr.bowShoot();
+      }
     } else {
       const melee = (this.classMods.meleeMult || 1);
       const dmg = (w.damage + this.attack) * melee * buff * invisBoost;
+
+      // ===== 巨砍刀衝擊波（揮砍自帶效果）=====
+      if (w.shockwave) {
+        // 雙層巨大劍光
+        game.particles.slashArc(this.x, this.y, this.facing, w.range + 14, '#cc3030');
+        game.particles.slashArc(this.x, this.y, this.facing, w.range, '#1a0a1a');
+        // 前方擴張震波環
+        game.particles.add({
+          x: this.x + Math.cos(this.facing) * 35,
+          y: this.y + Math.sin(this.facing) * 35,
+          vx: 0, vy: 0,
+          life: 0.45, max: 0.45, color: '#cc3030',
+          size: 20, type: 'ring', targetRadius: 90
+        });
+        // 火花
+        game.particles.spark(
+          this.x + Math.cos(this.facing) * 50,
+          this.y + Math.sin(this.facing) * 50,
+          14, '#ff5050'
+        );
+        game.shake(4, 0.15);
+        AudioMgr.shockwave();
+      }
+
+      // ===== doomCleaver：每次揮砍噴月牙（被動）=====
+      if (w.passiveMoon) {
+        const sx2 = this.x + Math.cos(this.facing) * (this.radius + 25);
+        const sy2 = this.y + Math.sin(this.facing) * (this.radius + 25);
+        const crescentDmg = (50 + this.attack * 1.2) * (game.mut?.skillDmgMult || 1);
+        const cres = new Projectile(sx2, sy2, this.facing, 360, crescentDmg, 'player', 'darkmoon');
+        cres.pierce = 99;
+        game.projectiles.push(cres);
+        game.particles.add({
+          x: sx2, y: sy2, vx: 0, vy: 0,
+          life: 0.3, max: 0.3, color: '#5a0a5a', size: 50, type: 'flash'
+        });
+        AudioMgr.fireball();
+      }
+
+      // ===== 黑魂附體：釋放巨大月牙 =====
+      if (this.darkSoulActive) {
+        const count = (game.mut?.darkmoonDouble) ? 2 : 1;
+        const crescentDmg = (40 + this.attack * 1.0) * (game.mut?.skillDmgMult || 1) * (game.mut?.darkmoonDmg || 1);
+        for (let i = 0; i < count; i++) {
+          const angOff = count > 1 ? (i === 0 ? -0.2 : 0.2) : 0;
+          const ang = this.facing + angOff;
+          const sx = this.x + Math.cos(ang) * (this.radius + 25);
+          const sy = this.y + Math.sin(ang) * (this.radius + 25);
+          const cres = new Projectile(sx, sy, ang, 340, crescentDmg, 'player', 'darkmoon');
+          cres.pierce = 99;
+          game.projectiles.push(cres);
+        }
+        // 出口暗紫閃光
+        game.particles.add({
+          x: this.x + Math.cos(this.facing) * 28,
+          y: this.y + Math.sin(this.facing) * 28,
+          vx: 0, vy: 0,
+          life: 0.3, max: 0.3, color: '#5a0a5a', size: 50, type: 'flash'
+        });
+        AudioMgr.fireball();
+      }
+
       let hitAny = false;
       for (const e of game.enemies) {
         if (!e.alive) continue;
@@ -217,6 +449,14 @@ class Player {
           game.particles.damageText(e.x, e.y - 10, dmg, '#fff');
           AudioMgr.hit();
           hitAny = true;
+          // bloodCleaver: 擊中回血
+          if (w.healOnHit) {
+            this.hp = Math.min(this.maxHp, this.hp + w.healOnHit);
+            game.particles.add({
+              x: this.x, y: this.y - 10, vx: 0, vy: -40,
+              life: 0.5, max: 0.5, color: '#ff5050', size: 4, type: 'fire', grow: -3
+            });
+          }
         }
       }
       if (game.boss && game.boss.alive) {
@@ -289,7 +529,8 @@ class Player {
     while (this.exp >= this.expNeed) {
       this.exp -= this.expNeed;
       this.level++;
-      this.skillPoints++;
+      // 每 2 級才 +1 技能點（之前太多）
+      if (this.level % 2 === 0) this.skillPoints++;
       this.maxHp += 5;
       this.hp = this.maxHp;
       this.mp = this.maxMp;
@@ -315,6 +556,34 @@ class Player {
 
     if (this.dashTime > 0) Utils.drawGlowCircle(ctx, s.x, s.y, 30, '#88ccff', 0.6);
     if (this.poisonTimer > 0) Utils.drawGlowCircle(ctx, s.x, s.y, 22, '#a050ff', 0.4);
+    // 黑魂附體：暗紫巨大光環
+    if (this.darkSoulActive) {
+      const pulse = (Math.sin(performance.now() / 120) + 1) * 0.5;
+      Utils.drawGlowCircle(ctx, s.x, s.y, 50 + pulse * 16, '#5a0a5a', 0.75);
+      Utils.drawGlowCircle(ctx, s.x, s.y, 30 + pulse * 8, '#cc3030', 0.5);
+      ctx.strokeStyle = `rgba(204,48,48,${0.5 + pulse * 0.4})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 36 + pulse * 8, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    // 狂熱：血紅光環
+    if (this.frenzyActive) {
+      const pulse = (Math.sin(performance.now() / 80) + 1) * 0.5;
+      Utils.drawGlowCircle(ctx, s.x, s.y, 42 + pulse * 14, '#cc3030', 0.7);
+      Utils.drawGlowCircle(ctx, s.x, s.y, 26 + pulse * 6, '#ff3030', 0.5);
+    }
+    // 冰巨箭：冷光環
+    if (this.iceArrowActive) {
+      const pulse = (Math.sin(performance.now() / 180) + 1) * 0.5;
+      Utils.drawGlowCircle(ctx, s.x, s.y, 50 + pulse * 14, '#aaccff', 0.7);
+      Utils.drawGlowCircle(ctx, s.x, s.y, 30 + pulse * 8, '#fff', 0.5);
+      ctx.strokeStyle = `rgba(170,204,255,${0.6 + pulse * 0.4})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 36 + pulse * 10, 0, Math.PI * 2);
+      ctx.stroke();
+    }
     // 血怒紅色脈動光環
     if (this.furyAura > 0) {
       const pulse = (Math.sin(performance.now() / 100) + 1) * 0.5;
@@ -426,6 +695,177 @@ class Player {
       ctx.beginPath();
       ctx.moveTo(this.radius + 6, -10); ctx.lineTo(this.radius + 6, 10);
       ctx.stroke();
+    } else if (this.currentWeapon === 'giantbow') {
+      // ===== 巨弓（玩家 2x 高、深木紋）=====
+      const ice = this.iceArrowActive;
+      const bowH = 28;
+      // 弓身外層暗色
+      ctx.strokeStyle = ice ? '#5a88cc' : '#5a3a10';
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.arc(this.radius + 12, 0, bowH, -Math.PI / 2, Math.PI / 2);
+      ctx.stroke();
+      // 弓身內層亮色
+      ctx.strokeStyle = ice ? '#aaccff' : '#cf9b3a';
+      ctx.lineWidth = 3;
+      if (ice) { ctx.shadowColor = '#aaccff'; ctx.shadowBlur = 12; }
+      ctx.beginPath();
+      ctx.arc(this.radius + 12, 0, bowH, -Math.PI / 2, Math.PI / 2);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      // 弓尖（雙端）
+      ctx.fillStyle = ice ? '#fff' : '#3a2010';
+      ctx.beginPath(); ctx.arc(this.radius + 12, -bowH, 4, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(this.radius + 12,  bowH, 4, 0, Math.PI * 2); ctx.fill();
+      // 弓握把（中央纏布）
+      ctx.fillStyle = '#3a2a10';
+      ctx.fillRect(this.radius + 8, -5, 8, 10);
+      ctx.strokeStyle = '#cf9b3a';
+      ctx.lineWidth = 1;
+      for (let i = -4; i <= 4; i += 2) {
+        ctx.beginPath();
+        ctx.moveTo(this.radius + 8, i); ctx.lineTo(this.radius + 16, i);
+        ctx.stroke();
+      }
+      // 弓弦（緊繃直線）
+      ctx.strokeStyle = ice ? '#fff' : '#eee';
+      ctx.lineWidth = ice ? 2 : 1.5;
+      ctx.beginPath();
+      ctx.moveTo(this.radius + 12, -bowH); ctx.lineTo(this.radius + 12, bowH);
+      ctx.stroke();
+      // 冰巨箭附魔時：弓中央漂浮的冰箭預備
+      if (ice) {
+        ctx.fillStyle = '#aaccff';
+        ctx.shadowColor = '#fff'; ctx.shadowBlur = 10;
+        ctx.fillRect(this.radius + 14, -2, 18, 4);
+        // 箭頭
+        ctx.beginPath();
+        ctx.moveTo(this.radius + 36, 0);
+        ctx.lineTo(this.radius + 30, -4);
+        ctx.lineTo(this.radius + 30, 4);
+        ctx.closePath(); ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+    } else if (this.currentWeapon === 'meteorStaff' || this.currentWeapon === 'skyburnStaff' || this.currentWeapon === 'genesisStaff') {
+      // ===== 法師杖（隕石杖/焚天杖/創世神杖）=====
+      const isVoid = this.currentWeapon === 'genesisStaff';
+      const isFire = this.currentWeapon === 'skyburnStaff';
+      const staffMain = isVoid ? '#1a0030' : isFire ? '#5a2010' : '#3a1f3a';
+      const orbOuter = isVoid ? '#5a00aa' : isFire ? '#ff3030' : '#aa00ff';
+      const orbCore = isVoid ? '#aa00ff' : isFire ? '#fff' : '#dca6ff';
+
+      // 杖柄（長棍）
+      ctx.fillStyle = staffMain;
+      ctx.fillRect(this.radius, -3, 30, 6);
+      // 杖柄紋
+      ctx.fillStyle = orbOuter;
+      ctx.fillRect(this.radius + 5, -3, 2, 6);
+      ctx.fillRect(this.radius + 15, -3, 2, 6);
+      ctx.fillRect(this.radius + 25, -3, 2, 6);
+
+      // 杖頂環
+      ctx.strokeStyle = staffMain;
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(this.radius + 36, 0, 10, 0, Math.PI * 2); ctx.stroke();
+
+      // 杖頂魔粒子球
+      ctx.shadowColor = orbOuter;
+      ctx.shadowBlur = 16;
+      ctx.fillStyle = orbOuter;
+      ctx.beginPath(); ctx.arc(this.radius + 36, 0, 8, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = orbCore;
+      ctx.beginPath(); ctx.arc(this.radius + 36, 0, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // 創世神杖：黑洞中心
+      if (isVoid) {
+        ctx.fillStyle = '#0a0030';
+        ctx.beginPath(); ctx.arc(this.radius + 36, 0, 3, 0, Math.PI * 2); ctx.fill();
+      }
+
+      // 杖頂環外圍 3 個小尖刺
+      ctx.fillStyle = orbOuter;
+      for (let i = 0; i < 3; i++) {
+        const a = i * Math.PI * 2 / 3 + performance.now() / 600;
+        const x = this.radius + 36 + Math.cos(a) * 14;
+        const y = Math.sin(a) * 14;
+        ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI * 2); ctx.fill();
+      }
+    } else if (this.currentWeapon === 'cleaver' || this.currentWeapon === 'bloodCleaver' || this.currentWeapon === 'doomCleaver') {
+      // ===== 巨砍刀（玩家 3 倍寬，~80px）=====
+      const big = this.darkSoulActive || this.currentWeapon === 'doomCleaver';
+      const tint = this.currentWeapon === 'bloodCleaver' ? 'blood'
+                  : this.currentWeapon === 'doomCleaver' ? 'doom' : 'normal';
+      // 柄
+      ctx.fillStyle = '#3a2010';
+      ctx.fillRect(this.radius - 4, -4, 26, 8);
+      ctx.fillStyle = '#1a0a05';
+      ctx.fillRect(this.radius - 4, -4, 26, 1);
+      ctx.fillRect(this.radius - 4, 3, 26, 1);
+      // 護手
+      ctx.fillStyle = '#5a3a20';
+      ctx.fillRect(this.radius + 18, -10, 5, 20);
+
+      // 巨大刀身（80px 長 × 50px 高）
+      if (big) {
+        ctx.shadowColor = '#cc3030';
+        ctx.shadowBlur = 24;
+      }
+      // 主刀身（黑灰漸層）
+      const grad = ctx.createLinearGradient(0, -25, 0, 25);
+      grad.addColorStop(0, big ? '#1a0a1a' : '#5a5a5a');
+      grad.addColorStop(0.5, big ? '#0a000a' : '#2a2a2a');
+      grad.addColorStop(1, big ? '#1a0a1a' : '#5a5a5a');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(this.radius + 24, -22);
+      ctx.quadraticCurveTo(this.radius + 60, -32, this.radius + 88, -16);
+      ctx.lineTo(this.radius + 96, -2);
+      ctx.lineTo(this.radius + 90, 14);
+      ctx.quadraticCurveTo(this.radius + 60, 26, this.radius + 24, 20);
+      ctx.closePath();
+      ctx.fill();
+
+      // 刀鋒（亮邊）
+      ctx.strokeStyle = big ? '#cc3030' : '#cccccc';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(this.radius + 24, -22);
+      ctx.quadraticCurveTo(this.radius + 60, -32, this.radius + 88, -16);
+      ctx.lineTo(this.radius + 96, -2);
+      ctx.stroke();
+
+      // 中央血槽
+      ctx.strokeStyle = big ? '#5a0a0a' : '#1a1a1a';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(this.radius + 30, -4);
+      ctx.quadraticCurveTo(this.radius + 60, -8, this.radius + 86, -2);
+      ctx.stroke();
+
+      // 血漬
+      ctx.fillStyle = '#aa0000';
+      ctx.beginPath();
+      ctx.ellipse(this.radius + 42, -10, 5, 3, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(this.radius + 64, 8, 7, 4, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#660000';
+      ctx.beginPath();
+      ctx.arc(this.radius + 52, 2, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath();
+      ctx.arc(this.radius + 78, -6, 2, 0, Math.PI * 2); ctx.fill();
+
+      // 黑魂附體 額外效果：紅色刀刃發光
+      if (big) {
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = '#ff3030';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(this.radius + 26, -20);
+        ctx.quadraticCurveTo(this.radius + 60, -30, this.radius + 86, -14);
+        ctx.stroke();
+      }
+      ctx.shadowBlur = 0;
     }
     ctx.restore();
 

@@ -184,6 +184,27 @@ const UI = {
     if (this.el.nameQ) this.el.nameQ.textContent = SKILL_DEFS[cls.skills.q]?.name || '技能 1';
     if (this.el.nameR) this.el.nameR.textContent = SKILL_DEFS[cls.skills.r]?.name || '技能 2';
     if (this.el.nameV) this.el.nameV.textContent = SKILL_DEFS[cls.skills.v]?.name || '治癒';
+    // 也更新武器槽位顯示
+    this.refreshWeaponSlots(classId);
+  },
+
+  // 武器槽位名稱（依職業 3 階傳說武器）
+  refreshWeaponSlots(classId) {
+    const slots = [
+      document.querySelector('#hotbar .slot[data-slot="1"] .name'),
+      document.querySelector('#hotbar .slot[data-slot="2"] .name'),
+      document.querySelector('#hotbar .slot[data-slot="3"] .name')
+    ];
+    const tiers = LEGENDARY_WEAPONS[classId] || [];
+    const player = window.GAME?.player;
+    for (let i = 0; i < 3; i++) {
+      const el = slots[i];
+      if (!el) continue;
+      const w = tiers[i];
+      if (!w) { el.textContent = '—'; continue; }
+      const owned = player?.unlockedWeapons?.includes(w.id);
+      el.textContent = owned ? w.name : `🔒 ${w.name}`;
+    }
   },
 
   updateCd(key, player, totalCd) {
@@ -216,30 +237,76 @@ const UI = {
     }
   },
 
-  // ===== 建築 / 技能 / 商店 =====
-  showBuildMenu(game) {
+  // ===== 鍛造選單（取代建造）=====
+  showForgeMenu(game) {
     this.el.buildMenu.classList.remove('hidden');
+    // 把標題改成鍛造
+    const h2 = this.el.buildMenu.querySelector('h2');
+    if (h2) h2.innerHTML = '鍛造傳說武器　<small>(B 關閉)</small>';
     const list = this.el.buildList;
     list.innerHTML = '';
-    for (const key of Object.keys(BUILDING_TYPES)) {
-      const cfg = BUILDING_TYPES[key];
+    const tiers = LEGENDARY_WEAPONS[game.player.classId] || [];
+    for (let i = 0; i < tiers.length; i++) {
+      const w = tiers[i];
+      const wcfg = WEAPONS[w.id] || {};
+      const owned = game.player.unlockedWeapons.includes(w.id);
+      const equipped = game.player.currentWeapon === w.id;
       const div = document.createElement('div');
       div.className = 'build-item';
-      if (game.selectedBuild === key) div.classList.add('selected');
-      const parts = [];
-      for (const [k, v] of Object.entries(cfg.cost)) {
-        const have = game.inventory[k] || 0;
-        parts.push(`<span class="${have >= v ? '' : 'lock'}">${k} ${v}</span>`);
+      if (equipped) div.classList.add('selected');
+
+      let costStr = '';
+      let canAfford = true;
+      if (w.cost) {
+        const parts = [];
+        for (const [k, v] of Object.entries(w.cost)) {
+          const have = game.inventory[k] || 0;
+          if (have < v) canAfford = false;
+          parts.push(`<span class="${have >= v ? '' : 'lock'}">${k} ${v}</span>`);
+        }
+        costStr = parts.join('  ');
+      } else {
+        costStr = '<span style="color:#888">初始裝備</span>';
       }
-      div.innerHTML = `<b>${cfg.name}</b>　HP ${cfg.hp}<div class="cost">材料：${parts.join('  ')}</div>`;
+
+      const stateLabel =
+        equipped ? '<span style="color:#ffd86b">★ 已裝備</span>' :
+        owned    ? '<span style="color:#6fdd6f">✓ 已鍛造（點擊裝備）</span>' :
+                   '<span style="color:#aaa">尚未鍛造</span>';
+
+      div.innerHTML = `
+        <b>[Tier ${i + 1}] ${w.name}</b>　傷害 ${wcfg.damage || '?'}　${stateLabel}
+        <div class="cost">${w.desc}</div>
+        <div class="cost">材料：${costStr}</div>`;
       div.onclick = () => {
-        game.selectedBuild = key; game.placingBuild = true;
-        AudioMgr.click(); this.showBuildMenu(game);
-        Utils.toast(`選擇：${cfg.name}`);
+        if (owned) {
+          if (!equipped) {
+            game.player.currentWeapon = w.id;
+            UI.refreshWeaponSlots(game.player.classId);
+            Utils.toast(`裝備：${w.name}`);
+            AudioMgr.click();
+            this.showForgeMenu(game);
+          }
+          return;
+        }
+        // 鍛造
+        if (!w.cost) return;
+        if (!canAfford) { Utils.toast('材料不足'); AudioMgr.deny(); return; }
+        for (const [k, v] of Object.entries(w.cost)) game.inventory[k] -= v;
+        game.player.unlockedWeapons.push(w.id);
+        game.player.currentWeapon = w.id;
+        AudioMgr.levelup();
+        Utils.bigToast(`鍛造完成：${w.name}！`);
+        // 鍛造粒子
+        game.particles.shockRing(game.player.x, game.player.y, 100, '#ffd86b');
+        game.particles.spark(game.player.x, game.player.y, 30, '#ffd86b');
+        UI.refreshWeaponSlots(game.player.classId);
+        this.showForgeMenu(game);
       };
       list.appendChild(div);
     }
   },
+  showBuildMenu(game) { this.showForgeMenu(game); },  // 舊呼叫相容
   hideBuildMenu() { this.el.buildMenu?.classList.add('hidden'); },
 
   showSkillPanel(game) {
@@ -390,22 +457,56 @@ const UI = {
     }
   },
 
-  // ===== 卡牌選擇 =====
+  // ===== 卡牌選擇（含預覽與確認按鈕，避免誤觸）=====
   showCardChoice(game) {
     this.el.cardScreen?.classList.remove('hidden');
     this.el.cardWave.textContent = game.waveManager.current;
+    this._selectedCard = null;
+    this._renderCardChoice(game);
+  },
+
+  _renderCardChoice(game) {
     const list = this.el.cardList;
     list.innerHTML = '';
+    // 三張卡
     for (const card of game.pendingCards) {
       const div = document.createElement('div');
       div.className = 'card-item tier-' + card.tier;
+      if (this._selectedCard?.id === card.id) div.classList.add('selected');
       div.style.borderColor = card.color;
       div.innerHTML = `
         <div class="card-tier" style="color:${card.color}">${this.tierLabel(card.tier)}</div>
         <h3>${card.name}</h3>
-        <p>${card.desc}</p>`;
-      div.onclick = () => { game.pickCard(card); };
+        <p>${card.desc}</p>
+        <div class="card-pick-hint">${this._selectedCard?.id === card.id ? '✓ 已選擇' : '點擊選擇'}</div>`;
+      div.onclick = () => {
+        this._selectedCard = card;
+        AudioMgr.click();
+        this._renderCardChoice(game);
+      };
       list.appendChild(div);
+    }
+
+    // 確認列
+    const row = document.createElement('div');
+    row.className = 'card-confirm-row';
+    if (this._selectedCard) {
+      row.innerHTML = `
+        <div class="card-confirm-info">已選：<b style="color:${this._selectedCard.color}">${this._selectedCard.name}</b> — ${this._selectedCard.desc}</div>
+        <button id="btn-card-confirm" class="confirm-btn">確認選擇</button>`;
+    } else {
+      row.innerHTML = `<div class="card-confirm-info dim">請點選一張卡牌</div>
+        <button id="btn-card-confirm" class="confirm-btn" disabled>確認選擇</button>`;
+    }
+    list.appendChild(row);
+
+    const btn = row.querySelector('#btn-card-confirm');
+    if (btn && this._selectedCard) {
+      btn.onclick = () => {
+        const c = this._selectedCard;
+        this._selectedCard = null;
+        game.pickCard(c);
+      };
     }
   },
   tierLabel(t) {

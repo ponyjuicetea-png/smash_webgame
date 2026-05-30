@@ -69,7 +69,7 @@ class Game {
   buildInitialQuests() {
     return [
       { id: 'wood', text: '收集 50 木材', target: 50, progress: 0, done: false },
-      { id: 'build', text: '建造 3 個防禦', target: 3, progress: 0, done: false },
+      { id: 'forge', text: '鍛造 1 件傳說武器', target: 1, progress: 0, done: false },
       { id: 'wave5', text: '擊敗第 5 波 Boss', target: 1, progress: 0, done: false },
       { id: 'skill3', text: '升技能到 3 級', target: 1, progress: 0, done: false },
       { id: 'wave15', text: '撐過第 15 波', target: 1, progress: 0, done: false },
@@ -127,6 +127,10 @@ class Game {
 
     this.player = new Player(this.mapW / 2, this.mapH / 2);
     this.player.applyClass(classId);
+    // 依職業設定初始解鎖武器（只有 Tier 1）
+    const tiers = LEGENDARY_WEAPONS[classId] || [];
+    this.player.unlockedWeapons = tiers[0] ? [tiers[0].id] : [];
+    if (tiers[0]) this.player.currentWeapon = tiers[0].id;
     this.skills = new SkillSystem();
     this.skills.applyAll(this.player);
     this.stats = new Stats();
@@ -207,12 +211,11 @@ class Game {
       qw.progress = Math.min(qw.target, this.inventory.wood);
       if (qw.progress >= qw.target) this.markQuestDone('wood');
     }
-    const qb = this.quests.find(q => q.id === 'build');
-    if (qb && !qb.done) {
-      const defCount = this.buildings.filter(b =>
-        b.alive && ['wall_wood','wall_stone','tower','trap'].includes(b.type)).length;
-      qb.progress = Math.max(qb.progress, defCount);
-      if (qb.progress >= qb.target) this.markQuestDone('build');
+    const qf = this.quests.find(q => q.id === 'forge');
+    if (qf && !qf.done) {
+      const forgedCount = (this.player.unlockedWeapons?.length || 1) - 1;
+      qf.progress = Math.max(qf.progress, forgedCount);
+      if (qf.progress >= qf.target) this.markQuestDone('forge');
     }
     const qs = this.quests.find(q => q.id === 'skill3');
     if (qs && !qs.done) {
@@ -245,15 +248,22 @@ class Game {
     this.player.update(dt, this);
     if (this.player.hp <= 0) { this.die(); return; }
 
-    // 切武器（必須在 unlockedWeapons 內）
-    if (Input.wasPressed('1') && this.player.unlockedWeapons.includes('axe'))  { this.player.currentWeapon = 'axe'; AudioMgr.click(); }
-    if (Input.wasPressed('2') && this.player.unlockedWeapons.includes('sword')){ this.player.currentWeapon = 'sword'; AudioMgr.click(); }
-    if (Input.wasPressed('3') && this.player.unlockedWeapons.includes('bow'))  { this.player.currentWeapon = 'bow'; AudioMgr.click(); }
+    // 1/2/3 切換傳說武器階級
+    const wtiers = LEGENDARY_WEAPONS[this.player.classId] || [];
+    if (Input.wasPressed('1') && wtiers[0] && this.player.unlockedWeapons.includes(wtiers[0].id)) {
+      this.player.currentWeapon = wtiers[0].id; AudioMgr.click();
+    }
+    if (Input.wasPressed('2') && wtiers[1] && this.player.unlockedWeapons.includes(wtiers[1].id)) {
+      this.player.currentWeapon = wtiers[1].id; AudioMgr.click();
+    }
+    if (Input.wasPressed('3') && wtiers[2] && this.player.unlockedWeapons.includes(wtiers[2].id)) {
+      this.player.currentWeapon = wtiers[2].id; AudioMgr.click();
+    }
 
     if (Input.wasPressed('b')) {
       this.uiBuildOpen = !this.uiBuildOpen; AudioMgr.click();
-      if (this.uiBuildOpen) UI.showBuildMenu(this);
-      else { UI.hideBuildMenu(); this.placingBuild = false; this.selectedBuild = null; }
+      if (this.uiBuildOpen) UI.showForgeMenu(this);
+      else UI.hideBuildMenu();
     }
     if (Input.wasPressed('t')) {
       this.uiSkillOpen = !this.uiSkillOpen; AudioMgr.click();
@@ -266,7 +276,8 @@ class Game {
     if (Input.wasPressed('f')) Save.save(this, 1);
     if (Input.wasPressed('l')) Save.load(this, 1);
 
-    if (this.placingBuild && this.selectedBuild && Input.mouse.pressed) this.tryPlaceBuilding();
+    // 建造功能已移除（改成鍛造）
+    // if (this.placingBuild && this.selectedBuild && Input.mouse.pressed) this.tryPlaceBuilding();
 
     // 排程觸發
     for (let i = this.scheduled.length - 1; i >= 0; i--) {
@@ -495,20 +506,22 @@ class Game {
 
   drawNightOverlay(ctx) {
     const cw = this.canvas.width, ch = this.canvas.height;
-    ctx.fillStyle = 'rgba(0, 10, 40, 0.62)';
+    // 整體變暗度從 0.62 降到 0.40（夜晚變亮一點）
+    ctx.fillStyle = 'rgba(10, 20, 50, 0.40)';
     ctx.fillRect(0, 0, cw, ch);
     ctx.save();
     ctx.globalCompositeOperation = 'destination-out';
     const ps = Utils.worldToScreen(this.player.x, this.player.y, this.camera);
-    const grad0 = ctx.createRadialGradient(ps.x, ps.y, 0, ps.x, ps.y, 110);
-    grad0.addColorStop(0, 'rgba(0,0,0,0.7)');
+    // 玩家周圍視野範圍從 110 擴大到 140，亮度從 0.7 提到 0.85
+    const grad0 = ctx.createRadialGradient(ps.x, ps.y, 0, ps.x, ps.y, 140);
+    grad0.addColorStop(0, 'rgba(0,0,0,0.85)');
     grad0.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = grad0;
-    ctx.beginPath(); ctx.arc(ps.x, ps.y, 110, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(ps.x, ps.y, 140, 0, Math.PI * 2); ctx.fill();
     for (const b of this.buildings) {
       if (!b.alive || b.type !== 'campfire') continue;
       const s = Utils.worldToScreen(b.x, b.y, this.camera);
-      const radius = 160 + Math.sin(performance.now() / 200) * 8;
+      const radius = 180 + Math.sin(performance.now() / 200) * 8;
       const grad = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, radius);
       grad.addColorStop(0, 'rgba(0,0,0,0.95)');
       grad.addColorStop(1, 'rgba(0,0,0,0)');

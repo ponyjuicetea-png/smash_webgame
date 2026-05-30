@@ -158,11 +158,12 @@ window.addEventListener('DOMContentLoaded', () => {
       AudioMgr.click();
       const s = slot.dataset.slot;
       const sk = slot.dataset.skill;
-      if (s === '1' && game.player.unlockedWeapons.includes('axe')) game.player.currentWeapon = 'axe';
-      else if (s === '2' && game.player.unlockedWeapons.includes('sword')) game.player.currentWeapon = 'sword';
-      else if (s === '3' && game.player.unlockedWeapons.includes('bow')) game.player.currentWeapon = 'bow';
-      else if (s === 'B') { game.uiBuildOpen = !game.uiBuildOpen;
-        game.uiBuildOpen ? UI.showBuildMenu(game) : UI.hideBuildMenu(); }
+      const tiers = LEGENDARY_WEAPONS[game.player.classId] || [];
+      if (s === '1' && tiers[0] && game.player.unlockedWeapons.includes(tiers[0].id)) game.player.currentWeapon = tiers[0].id;
+      else if (s === '2' && tiers[1] && game.player.unlockedWeapons.includes(tiers[1].id)) game.player.currentWeapon = tiers[1].id;
+      else if (s === '3' && tiers[2] && game.player.unlockedWeapons.includes(tiers[2].id)) game.player.currentWeapon = tiers[2].id;
+      if (s === 'B') { game.uiBuildOpen = !game.uiBuildOpen;
+        game.uiBuildOpen ? UI.showForgeMenu(game) : UI.hideBuildMenu(); }
       else if (s === 'T') { game.uiSkillOpen = !game.uiSkillOpen;
         game.uiSkillOpen ? UI.showSkillPanel(game) : UI.hideSkillPanel(); }
       else if (s === 'N') { game.uiShopOpen = !game.uiShopOpen;

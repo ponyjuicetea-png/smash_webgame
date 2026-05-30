@@ -35,26 +35,6 @@ const CARD_POOL = [
   { id: 'wall_regen', classes: 'all', tier: 'rare', name: '自癒之牆',  desc: '牆隨時間回血', color: '#cccccc',
     apply: g => { g.mut.wallRegen = true; } },
 
-  // ====================== 戰士 專屬 ======================
-  { id: 'w_slash_extra', classes: ['warrior'], tier: 'rare', name: '六連斬', color: '#ff5050',
-    desc: '狂暴斬擊增加 2 道劍光',
-    apply: g => { g.mut.slashExtra = (g.mut.slashExtra || 0) + 2; } },
-  { id: 'w_slash_fire', classes: ['warrior'], tier: 'rare', name: '烈焰劍氣', color: '#ff8030',
-    desc: '狂暴斬擊命中附加燃燒（3 秒）',
-    apply: g => { g.mut.slashFire = true; } },
-  { id: 'w_earth_size', classes: ['warrior'], tier: 'rare', name: '大地撕裂', color: '#aa6020',
-    desc: '大地震動半徑 +30%',
-    apply: g => { g.mut.earthSize = (g.mut.earthSize || 0) + 0.3; } },
-  { id: 'w_earth_burn', classes: ['warrior'], tier: 'rare', name: '岩漿地裂', color: '#cc4020',
-    desc: '大地震動裂縫造成持續傷害',
-    apply: g => { g.mut.earthCrack = true; } },
-  { id: 'w_fury_dur', classes: ['warrior'], tier: 'rare', name: '永燃血怒', color: '#dd3030',
-    desc: '血怒之力持續時間 +5 秒',
-    apply: g => { g.mut.furyDur = (g.mut.furyDur || 0) + 5; } },
-  { id: 'w_fury_boost', classes: ['warrior'], tier: 'legendary', name: '狂戰士之心', color: '#ff66ff',
-    desc: '血怒之力傷害提升改為 +50%、加成持續延長',
-    apply: g => { g.mut.furyBoost = true; g.mut.furyDur = (g.mut.furyDur || 0) + 3; } },
-
   // ====================== 法師 專屬 ======================
   { id: 'm_meteor_more', classes: ['mage'], tier: 'rare', name: '隕石暴雨', color: '#ff5020',
     desc: '隕石術 +3 顆隕石',
@@ -82,9 +62,9 @@ const CARD_POOL = [
   { id: 'a_pierce_more', classes: ['archer'], tier: 'rare', name: '穿透精通', color: '#ffaa55',
     desc: '所有箭穿透 +2',
     apply: g => { g.mut.pierceAll = (g.mut.pierceAll || 0) + 2; } },
-  { id: 'a_thunder_dmg', classes: ['archer'], tier: 'rare', name: '雷霆精通', color: '#bbeaff',
-    desc: '雷霆穿心傷害 +50%',
-    apply: g => { g.mut.thunderBoost = true; } },
+  { id: 'a_ice_dur', classes: ['archer'], tier: 'rare', name: '永凍領域', color: '#bbeaff',
+    desc: '冰巨箭持續 +6 秒',
+    apply: g => { g.mut.iceArrowDur = (g.mut.iceArrowDur || 0) + 6; } },
   { id: 'a_invis_dmg', classes: ['archer'], tier: 'rare', name: '暗影狙擊', color: '#3a8a3a',
     desc: '隱身時攻擊傷害 +80%',
     apply: g => { g.mut.invisBoost = true; } },
@@ -94,6 +74,30 @@ const CARD_POOL = [
       g.mut.stormExtra = (g.mut.stormExtra || 0) + 5;
       g.mut.pierceAll = (g.mut.pierceAll || 0) + 1;
       g.mut.attackSpeedMult = (g.mut.attackSpeedMult || 1) * 0.7;
+    } },
+
+  // ====================== 黑靈狂戰士 專屬 ======================
+  { id: 'b_double_moon', classes: ['berserker'], tier: 'rare', name: '雙倍月牙', color: '#5a0a5a',
+    desc: '黑魂附體期間每次攻擊釋放 2 道月牙',
+    apply: g => { g.mut.darkmoonDouble = true; } },
+  { id: 'b_moon_dmg', classes: ['berserker'], tier: 'rare', name: '巨型月牙', color: '#cc3030',
+    desc: '黑色月牙傷害 +60%',
+    apply: g => { g.mut.darkmoonDmg = (g.mut.darkmoonDmg || 1) + 0.6; } },
+  { id: 'b_darksoul_dur', classes: ['berserker'], tier: 'rare', name: '永恆黑魂', color: '#3a0a3a',
+    desc: '黑魂附體持續 +6 秒',
+    apply: g => { g.mut.darksoulDur = (g.mut.darksoulDur || 0) + 6; } },
+  { id: 'b_frenzy_dur', classes: ['berserker'], tier: 'rare', name: '無盡狂熱', color: '#ff3030',
+    desc: '狂熱持續 +4 秒',
+    apply: g => { g.mut.frenzyDur = (g.mut.frenzyDur || 0) + 4; } },
+  { id: 'b_recovery', classes: ['berserker'], tier: 'rare', name: '吞噬恢復', color: '#5a0a0a',
+    desc: '恢復改為 +70% HP 且無敵 +3 秒',
+    apply: g => { g.mut.recoveryBoost = true; } },
+  { id: 'b_overlord', classes: ['berserker'], tier: 'legendary', name: '黑暗領主', color: '#aa00aa',
+    desc: '黑魂 +10 秒、月牙傷害 +100%、攻速 +20%',
+    apply: g => {
+      g.mut.darksoulDur = (g.mut.darksoulDur || 0) + 10;
+      g.mut.darkmoonDmg = (g.mut.darkmoonDmg || 1) + 1.0;
+      g.mut.attackSpeedMult = (g.mut.attackSpeedMult || 1) * 0.8;
     } },
 
   // ====================== 詛咒 ======================

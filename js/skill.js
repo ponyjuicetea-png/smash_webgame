@@ -64,8 +64,13 @@ const SKILL_DEFS = {
   m_spring: { name: '生命之泉', cost: 50, cd: 20, desc: '回 60% HP + 治癒陣 3 秒' },
   // 弓手
   a_storm:  { name: '箭矢風暴', cost: 25, cd: 5,  desc: '12 道穿透箭扇形齊射' },
-  a_pierce: { name: '雷霆穿心', cost: 50, cd: 10, desc: '雷霆箭直線貫穿全場敵人' },
-  a_embrace:{ name: '獵人之擁', cost: 40, cd: 16, desc: '回 40% HP + 3 秒隱身 + 速度 +50%' }
+  a_ice:    { name: '冰巨箭',   cost: 80, cd: 35, desc: '14 秒附魔：普攻變 5 倍大冰巨箭、命中凍結 2.5 秒' },
+  a_pierce: { name: '雷霆穿心', cost: 50, cd: 10, desc: '（已替換）' },
+  a_embrace:{ name: '獵人之擁', cost: 40, cd: 16, desc: '回 40% HP + 3 秒隱身 + 速度 +50%' },
+  // 黑靈狂戰士
+  b_darksoul: { name: '黑魂附體', cost: 35, cd: 12, desc: '8 秒附魔：每次揮砍釋放巨大黑色月牙' },
+  b_frenzy:   { name: '狂熱',     cost: 40, cd: 14, desc: '6 秒攻速 +50%、移速 +30%' },
+  b_recovery: { name: '恢復',     cost: 45, cd: 18, desc: '回 50% HP + 1 秒無敵' }
 };
 
 const ActiveSkills = {
@@ -233,21 +238,35 @@ const ActiveSkills = {
     // 法師 Mage
     // ============================================================
 
-    // 隕石術：5 道（+mut）隕石從天而降
+    // 隕石術：10 道（+mut）隕石近全螢幕降下
     m_meteor(game) {
       const player = game.player;
-      const count = 5 + (game.mut?.meteorExtra || 0);
+      const weaponMult = WEAPONS[player.currentWeapon]?.skillMult || 1;
+      const count = 10 + (game.mut?.meteorExtra || 0) + Math.round((weaponMult - 1) * 4);
       const cx = Input.mouse.worldX;
       const cy = Input.mouse.worldY;
-      const baseDmg = (50 + player.attack * 1.2) * ActiveSkills.dmgMult(game);
+      const baseDmg = (70 + player.attack * 1.5) * ActiveSkills.dmgMult(game) * weaponMult;
+
+      // 中央巨大爆閃預警
+      game.particles.add({
+        x: cx, y: cy, vx: 0, vy: 0,
+        life: 0.5, max: 0.5, color: 'rgba(255,80,40,0.7)',
+        size: 240, type: 'flash'
+      });
+      // 三層紅色預警圈
+      game.particles.shockRing(cx, cy, 280, '#ff5020');
+      game.particles.shockRing(cx, cy, 200, '#ff8030');
+      game.particles.shockRing(cx, cy, 120, '#ffaa33');
+      // 螢幕震動 (連續低頻)
+      game.shake(4, 0.3);
       for (let i = 0; i < count; i++) {
-        const delay = Utils.randomRange(0.05, 0.55);
+        const delay = Utils.randomRange(0.05, 1.2);
         const ang = (i / count) * Math.PI * 2 + Math.random();
-        const r = Utils.randomRange(0, 110);
+        const r = Utils.randomRange(0, 240);
         const tx = cx + Math.cos(ang) * r;
         const ty = cy + Math.sin(ang) * r;
-        const sx = tx - 220 + Utils.jitter(40);
-        const sy = ty - 480;
+        const sx = tx - 380 + Utils.jitter(80);
+        const sy = ty - 700;
         // 目標標記
         game.schedule(delay - 0.02, () => {
           game.particles.add({
@@ -276,50 +295,111 @@ const ActiveSkills = {
             });
           }
         });
-        game.schedule(delay + 0.25, () => {
-          // 撞擊
-          game.particles.explosion(tx, ty, 80);
-          game.shake(4, 0.18);
+        game.schedule(delay + 0.35, () => {
+          // 巨型撞擊（兩層爆炸 + 衝擊環）
+          game.particles.explosion(tx, ty, 130);
+          game.particles.explosion(tx + Utils.jitter(30), ty + Utils.jitter(30), 80);
+          game.particles.shockRing(tx, ty, 160, '#ff5020');
+          game.particles.shockRing(tx, ty, 90, '#fff');
+          // 撞擊坑（黑色圓）
+          game.particles.add({
+            x: tx, y: ty, vx: 0, vy: 0,
+            life: 1.5, max: 1.5, color: 'rgba(40,20,10,0.5)',
+            size: 60, type: 'smoke', grow: -10
+          });
+          game.shake(7, 0.25);
           AudioMgr.explosion();
+          AudioMgr.shockwave();
           for (const e of game.enemies) {
             if (!e.alive) continue;
-            if (Utils.distance(tx, ty, e.x, e.y) < 90 + e.radius) {
+            if (Utils.distance(tx, ty, e.x, e.y) < 130 + e.radius) {
               e.takeDamage(baseDmg, game);
+              e.applyKnockback(tx, ty, 280);
               game.particles.damageText(e.x, e.y - 12, baseDmg, '#ffaa33');
             }
           }
           if (game.boss && game.boss.alive) {
-            if (Utils.distance(tx, ty, game.boss.x, game.boss.y) < 90 + game.boss.radius) {
-              game.boss.takeDamage(baseDmg * 0.8, game);
+            if (Utils.distance(tx, ty, game.boss.x, game.boss.y) < 130 + game.boss.radius) {
+              game.boss.takeDamage(baseDmg * 0.85, game);
             }
           }
-          // 冰霜烙印：留下冰霜地面
           if (game.mut?.meteorIce) {
             game.iceZones = game.iceZones || [];
-            game.iceZones.push({ x: tx, y: ty, radius: 70, life: 4 });
+            game.iceZones.push({ x: tx, y: ty, radius: 90, life: 5 });
           }
         });
       }
-      Utils.toast('隕石術！');
+      Utils.bigToast('隕石術！');
       AudioMgr.fireball();
+      AudioMgr.bossSpawn();
     },
 
-    // 冰封新星：以自身為中心冰晶四射 + 凍結
+    // 冰封新星：近全螢幕冰風暴
     m_frost(game) {
       const player = game.player;
-      const radius = 290;
-      const baseDmg = (80 + player.attack * 1.0) * ActiveSkills.dmgMult(game);
-      const freezeDur = 2 + (game.mut?.freezeExtra || 0);
-      // 4 層震波
-      game.particles.shockRing(player.x, player.y, radius, '#aaccff');
-      game.particles.shockRing(player.x, player.y, radius * 0.55, '#fff');
-      game.particles.shockRing(player.x, player.y, radius * 0.85, '#88aaff');
-      game.particles.frostNova(player.x, player.y, radius);
-      // 中央閃光
+      const weaponMult = WEAPONS[player.currentWeapon]?.skillMult || 1;
+      const radius = 520 * Math.sqrt(weaponMult);  // 巨幅擴大
+      const baseDmg = (110 + player.attack * 1.4) * ActiveSkills.dmgMult(game) * weaponMult;
+      const freezeDur = 3 + (game.mut?.freezeExtra || 0);
+
+      // 6 層震波（從小到大連續擴張）
+      const ringColors = ['#fff', '#aaccff', '#88aaff', '#fff', '#aaccff', '#5577aa'];
+      for (let i = 0; i < 6; i++) {
+        game.schedule(i * 0.04, () => {
+          game.particles.shockRing(player.x, player.y, radius * (0.25 + i * 0.15), ringColors[i]);
+        });
+      }
+      // 中央巨大爆閃
       game.particles.add({
         x: player.x, y: player.y, vx: 0, vy: 0,
-        life: 0.4, max: 0.4, color: '#fff', size: 80, type: 'flash'
+        life: 0.5, max: 0.5, color: '#fff', size: 180, type: 'flash'
       });
+      game.particles.add({
+        x: player.x, y: player.y, vx: 0, vy: 0,
+        life: 0.45, max: 0.45, color: 'rgba(170,204,255,0.6)',
+        size: 320, type: 'flash'
+      });
+      // 大量飛旋冰晶（兩波）
+      game.particles.frostNova(player.x, player.y, radius);
+      game.schedule(0.15, () => game.particles.frostNova(player.x, player.y, radius * 0.7));
+      // 額外環狀大冰晶（60 顆）
+      for (let i = 0; i < 60; i++) {
+        const a = (i / 60) * Math.PI * 2;
+        const sp = radius / 0.65;
+        game.particles.add({
+          x: player.x, y: player.y,
+          vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+          life: 0.7, max: 0.7, color: '#aaccff',
+          size: Utils.randomRange(6, 10), type: 'iceShard', angle: a
+        });
+      }
+      // 上升冰霧（覆蓋整個螢幕感）
+      for (let i = 0; i < 40; i++) {
+        game.particles.add({
+          x: player.x + Utils.jitter(120), y: player.y + Utils.jitter(60),
+          vx: Utils.jitter(20), vy: -Utils.randomRange(40, 110),
+          life: 1.8, max: 1.8, color: 'rgba(170,204,255,0.6)',
+          size: Utils.randomRange(10, 18), type: 'smoke', grow: 10
+        });
+      }
+      // 周圍 8 道隨機冰柱
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        const r = Utils.randomRange(radius * 0.3, radius * 0.6);
+        const tx = player.x + Math.cos(a) * r;
+        const ty = player.y + Math.sin(a) * r;
+        game.schedule(0.1 + i * 0.04, () => {
+          for (let j = 0; j < 5; j++) {
+            game.particles.add({
+              x: tx, y: ty,
+              vx: 0, vy: -Utils.randomRange(40, 90) - j * 20,
+              life: 0.8, max: 0.8, color: '#fff',
+              size: 12 - j * 1.5, type: 'iceShard', angle: -Math.PI/2
+            });
+          }
+          game.particles.shockRing(tx, ty, 30, '#aaccff');
+        });
+      }
       // 傷害 + 凍結
       for (const e of game.enemies) {
         if (!e.alive) continue;
@@ -327,20 +407,20 @@ const ActiveSkills = {
           e.takeDamage(baseDmg, game);
           e.frozenTimer = freezeDur;
           e.slowTimer = freezeDur + 1;
-          game.particles.damageText(e.x, e.y - 12, baseDmg, '#aaccff');
+          game.particles.damageText(e.x, e.y - 12, baseDmg, '#aaccff', true);
         }
       }
       if (game.boss && game.boss.alive) {
         const d = Utils.distance(player.x, player.y, game.boss.x, game.boss.y);
         if (d < radius + game.boss.radius) {
-          game.boss.takeDamage(baseDmg, game);
-          // Boss 不能被完全凍結，但減速
-          game.boss.slowTimer = freezeDur * 0.5;
+          game.boss.takeDamage(baseDmg * 1.2, game);
+          game.boss.slowTimer = freezeDur * 0.6;
         }
       }
       AudioMgr.shockwave();
       AudioMgr.lightning();
-      game.shake(10, 0.4);
+      AudioMgr.bossSpawn();
+      game.shake(16, 0.55);
       Utils.bigToast('冰封新星！');
     },
 
@@ -460,6 +540,187 @@ const ActiveSkills = {
       game.particles.damageText(player.x, player.y - 24, '+' + amt, '#6fdd6f', true);
       AudioMgr.heal();
       Utils.bigToast('獵人之擁！');
+    },
+
+    // 冰巨箭：14 秒附魔，普攻變超大冰箭、命中凍結
+    a_ice(game) {
+      const player = game.player;
+      const dur = 14 + (game.mut?.iceArrowDur || 0);
+      player.iceArrowEnd = performance.now() / 1000 + dur;
+      player.iceArrowActive = true;
+
+      // 中央巨大冰爆閃光
+      game.particles.add({
+        x: player.x, y: player.y, vx: 0, vy: 0,
+        life: 0.5, max: 0.5, color: '#fff', size: 140, type: 'flash'
+      });
+      // 三層冰震波
+      game.particles.shockRing(player.x, player.y, 200, '#aaccff');
+      game.particles.shockRing(player.x, player.y, 130, '#fff');
+      game.particles.shockRing(player.x, player.y, 80, '#88aaff');
+      // 大量飛旋冰晶
+      game.particles.frostNova(player.x, player.y, 220);
+      // 額外環繞冰晶（更密集）
+      for (let i = 0; i < 40; i++) {
+        const a = (i / 40) * Math.PI * 2;
+        const sp = Utils.randomRange(120, 320);
+        game.particles.add({
+          x: player.x, y: player.y,
+          vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+          life: 0.9, max: 0.9, color: '#aaccff',
+          size: Utils.randomRange(5, 9), type: 'iceShard', angle: a
+        });
+      }
+      // 上升冰霧
+      for (let i = 0; i < 22; i++) {
+        game.particles.add({
+          x: player.x + Utils.jitter(40), y: player.y + Utils.jitter(20),
+          vx: Utils.jitter(15), vy: -Utils.randomRange(40, 100),
+          life: 1.5, max: 1.5, color: 'rgba(170,204,255,0.7)',
+          size: Utils.randomRange(8, 14), type: 'smoke', grow: 6
+        });
+      }
+      // 冰凍周圍敵人（範圍 280）
+      for (const e of game.enemies) {
+        if (!e.alive) continue;
+        if (Utils.distance(player.x, player.y, e.x, e.y) < 280 + e.radius) {
+          e.frozenTimer = Math.max(e.frozenTimer || 0, 1.5);
+          e.slowTimer = Math.max(e.slowTimer || 0, 2.5);
+        }
+      }
+      AudioMgr.shockwave();
+      AudioMgr.lightning();
+      game.shake(11, 0.45);
+      Utils.bigToast('冰巨箭！');
+    },
+
+    // ============================================================
+    // 黑靈狂戰士 Berserker
+    // ============================================================
+
+    // 黑魂附體：8 秒附魔，每次揮砍釋放黑色月牙
+    b_darksoul(game) {
+      const player = game.player;
+      const dur = 8 + (game.mut?.darksoulDur || 0);
+      player.darkSoulEnd = performance.now() / 1000 + dur;
+      player.darkSoulActive = true;
+      // 中央巨大暗紫衝擊
+      game.particles.shockRing(player.x, player.y, 140, '#3a0a3a');
+      game.particles.shockRing(player.x, player.y, 90, '#5a0a5a');
+      game.particles.shockRing(player.x, player.y, 50, '#cc3030');
+      game.particles.add({
+        x: player.x, y: player.y, vx: 0, vy: 0,
+        life: 0.4, max: 0.4, color: '#5a0a5a', size: 100, type: 'flash'
+      });
+      // 環狀邪氣粒子
+      for (let i = 0; i < 36; i++) {
+        const a = (i / 36) * Math.PI * 2;
+        const r = 40 + Math.random() * 30;
+        game.particles.add({
+          x: player.x + Math.cos(a) * r,
+          y: player.y + Math.sin(a) * r,
+          vx: -Math.sin(a) * 100,
+          vy: Math.cos(a) * 100 - 60,
+          life: 1.5, max: 1.5,
+          color: Utils.pick(['#3a0a3a', '#5a0a5a', '#cc3030', '#0a000a']),
+          size: Utils.randomRange(4, 7), type: 'fire', grow: -3
+        });
+      }
+      // 上升黑霧
+      for (let i = 0; i < 16; i++) {
+        game.particles.add({
+          x: player.x + Utils.jitter(30), y: player.y + Utils.jitter(15),
+          vx: Utils.jitter(20), vy: -Utils.randomRange(40, 100),
+          life: 1.2, max: 1.2, color: 'rgba(40,10,40,0.8)',
+          size: Utils.randomRange(6, 12), type: 'smoke', grow: 6
+        });
+      }
+      AudioMgr.shockwave();
+      AudioMgr.bossSpawn();
+      game.shake(10, 0.4);
+      Utils.bigToast('黑魂附體！');
+    },
+
+    // 狂熱：6 秒攻擊速度與移速大增
+    b_frenzy(game) {
+      const player = game.player;
+      const dur = 6 + (game.mut?.frenzyDur || 0);
+      player.frenzyEnd = performance.now() / 1000 + dur;
+      player.frenzyActive = true;
+      // 血紅震波 + 紅霧
+      game.particles.shockRing(player.x, player.y, 120, '#cc3030');
+      game.particles.shockRing(player.x, player.y, 70, '#ff3030');
+      game.particles.shockRing(player.x, player.y, 40, '#fff');
+      // 紅色血滴向上爆射
+      for (let i = 0; i < 30; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const sp = Utils.randomRange(80, 220);
+        game.particles.add({
+          x: player.x, y: player.y,
+          vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 80,
+          life: 0.8, max: 0.8,
+          color: Utils.pick(['#cc3030', '#ff3030', '#aa0000', '#5a0a0a']),
+          size: Utils.randomRange(3, 6), type: 'blood', gravity: 160
+        });
+      }
+      // 持續上升的紅霧
+      for (let i = 0; i < 20; i++) {
+        game.particles.add({
+          x: player.x + Utils.jitter(35), y: player.y + Utils.jitter(15),
+          vx: Utils.jitter(15), vy: -Utils.randomRange(40, 90),
+          life: 1.0, max: 1.0, color: 'rgba(200,40,40,0.7)',
+          size: Utils.randomRange(6, 10), type: 'smoke', grow: 8
+        });
+      }
+      AudioMgr.shockwave();
+      AudioMgr.swing();
+      game.shake(8, 0.35);
+      Utils.bigToast('狂熱！');
+    },
+
+    // 恢復：50% HP + 1 秒無敵 + 暴力視覺
+    b_recovery(game) {
+      const player = game.player;
+      const pct = game.mut?.recoveryBoost ? 0.7 : 0.5;
+      const amt = Math.floor(player.maxHp * pct);
+      player.hp = Math.min(player.maxHp, player.hp + amt);
+      player.invuln = game.mut?.recoveryBoost ? 3 : 1;
+      // 血腥暴力的回血視覺
+      game.particles.shockRing(player.x, player.y, 100, '#cc3030');
+      game.particles.shockRing(player.x, player.y, 60, '#5a0a0a');
+      // 血紅光柱
+      game.particles.add({
+        x: player.x, y: player.y, vx: 0, vy: 0,
+        life: 0.5, max: 0.5, color: '#cc3030', size: 120, type: 'flash'
+      });
+      // 大量血滴向上飛
+      for (let i = 0; i < 40; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const r = Math.random() * 60;
+        game.particles.add({
+          x: player.x + Math.cos(a) * r,
+          y: player.y + Math.sin(a) * r,
+          vx: Math.cos(a) * 60,
+          vy: Math.sin(a) * 60 - Utils.randomRange(60, 120),
+          life: 1.0, max: 1.0,
+          color: Utils.pick(['#cc3030', '#5a0a0a', '#ff3030', '#0a0000']),
+          size: Utils.randomRange(4, 8), type: 'blood', gravity: 240
+        });
+      }
+      // 上升的恢復粒子
+      for (let i = 0; i < 24; i++) {
+        game.particles.add({
+          x: player.x + Utils.jitter(30), y: player.y + Utils.jitter(15),
+          vx: Utils.jitter(15), vy: -Utils.randomRange(50, 110),
+          life: 1.2, max: 1.2, color: Utils.pick(['#ff3030', '#cc3030', '#fff']),
+          size: Utils.randomRange(4, 6), type: 'fire', grow: -4
+        });
+      }
+      game.particles.damageText(player.x, player.y - 24, '+' + amt, '#ff5050', true);
+      AudioMgr.heal();
+      AudioMgr.shockwave();
+      game.shake(6, 0.3);
+      Utils.bigToast('恢復！');
     }
 
   } // end castMap
