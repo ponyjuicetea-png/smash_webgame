@@ -202,9 +202,14 @@ class Player {
       this.stamina += dt * 12 * game.skills.staminaRegenMult();
       if (this.stamina > this.maxStamina) this.stamina = this.maxStamina;
     }
-    const mpRegen = (this.classMods.mpRegen || 4);
+    const mpRegen = (this.classMods.mpRegen || 4) + (game.mut?.mpRegenBonus || 0);
     this.mp += dt * mpRegen;
     if (this.mp > this.maxMp) this.mp = this.maxMp;
+    // HP 被動回復(來自卡牌)
+    if (game.mut?.hpRegenBonus) {
+      this.hp += dt * game.mut.hpRegenBonus;
+      if (this.hp > this.maxHp) this.hp = this.maxHp;
+    }
 
     // 移動
     let dx = 0, dy = 0;
@@ -387,12 +392,29 @@ class Player {
         }
       } else {
         // 一般弓箭(其他職業)
-        const p = new Projectile(sx, sy, this.facing, w.projectileSpeed, dmg, 'player', 'arrow');
+        const aspd = game.mut?.arrowSpeed || 1;
+        const p = new Projectile(sx, sy, this.facing, w.projectileSpeed * aspd, dmg, 'player', 'arrow');
         if (boomR) p.boomOnHit = boomR;
         game.projectiles.push(p);
         game.particles.muzzleFlash(sx, sy, this.facing, '#fff066');
         game.shake(2, 0.08);
         AudioMgr.bowShoot();
+      }
+      // 雙生連射:doubleShot 機率多射 1 箭
+      if (game.mut?.doubleShot && Math.random() < game.mut.doubleShot) {
+        game.schedule(0.05, () => {
+          const ang2 = this.facing + Utils.jitter(0.1);
+          const sx3 = this.x + Math.cos(ang2) * (this.radius + 10);
+          const sy3 = this.y + Math.sin(ang2) * (this.radius + 10);
+          const aspd = game.mut?.arrowSpeed || 1;
+          const kind = (this.currentWeapon === 'giantbow' || w.multiShot || w.alwaysIce) ? 'giantarrow' : 'arrow';
+          const p2 = new Projectile(sx3, sy3, ang2, w.projectileSpeed * aspd, dmg * 0.8, 'player', kind);
+          p2.radius = kind === 'giantarrow' ? 10 : 4;
+          if (boomR) p2.boomOnHit = boomR;
+          if (this.iceArrowActive) { p2.iceArrow = true; p2.radius = 24; p2.freezeOnHit = 2.0; }
+          game.projectiles.push(p2);
+          game.particles.muzzleFlash(sx3, sy3, ang2, '#fff066');
+        });
       }
     } else {
       const melee = (this.classMods.meleeMult || 1);

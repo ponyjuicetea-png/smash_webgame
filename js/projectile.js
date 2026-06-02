@@ -364,6 +364,29 @@ class Projectile {
                 b2.takeDamage(aoeDmg * 0.7, game);
               }
             }
+            // 連鎖爆裂:對範圍內 3 隻最近的活怪再發小爆
+            if (game.mut?.boomChain) {
+              const hits = game.enemies
+                .filter(en => en.alive && Utils.distance(this.x, this.y, en.x, en.y) < br * 2 + en.radius)
+                .sort((a, b) => Utils.distance(this.x, this.y, a.x, a.y) - Utils.distance(this.x, this.y, b.x, b.y))
+                .slice(0, 3);
+              hits.forEach((en, idx) => {
+                game.schedule(0.08 + idx * 0.06, () => {
+                  if (!en.alive) return;
+                  const cr = br * 0.6;
+                  game.particles.explosion(en.x, en.y, cr);
+                  game.particles.shockRing(en.x, en.y, cr * 1.2, '#ff5020');
+                  for (const en2 of game.enemies) {
+                    if (!en2.alive) continue;
+                    if (Utils.distance(en.x, en.y, en2.x, en2.y) < cr + en2.radius) {
+                      en2.takeDamage(aoeDmg * 0.5, game);
+                    }
+                  }
+                  game.shake(3, 0.12);
+                  AudioMgr.explosion();
+                });
+              });
+            }
           }
           // 穿透
           if (this.pierce > 0) {

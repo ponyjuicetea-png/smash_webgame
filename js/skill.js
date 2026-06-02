@@ -96,6 +96,33 @@ const ActiveSkills = {
     player.skillCd[key] = sk.cd * cdMult;
     game.stats?.recordSkill(key);
     this.castMap[id](game);
+    // 末日降臨:每次施法後玩家中心爆炸
+    if (game.mut?.castShockwave) {
+      const r = 220;
+      const dmg = (player.attack + 30) * 0.6 * ActiveSkills.dmgMult(game);
+      game.particles.add({
+        x: player.x, y: player.y, vx: 0, vy: 0,
+        life: 0.45, max: 0.45, color: 'rgba(170,0,255,0.6)',
+        size: 280, type: 'flash'
+      });
+      game.particles.shockRing(player.x, player.y, r, '#aa00ff');
+      game.particles.shockRing(player.x, player.y, r * 0.7, '#fff');
+      for (const e of game.enemies) {
+        if (!e.alive) continue;
+        if (Utils.distance(player.x, player.y, e.x, e.y) < r + e.radius) {
+          e.takeDamage(dmg, game);
+          e.applyKnockback(player.x, player.y, 250);
+        }
+      }
+      for (const b of game.bosses) {
+        if (!b || !b.alive) continue;
+        if (Utils.distance(player.x, player.y, b.x, b.y) < r + b.radius) {
+          b.takeDamage(dmg * 0.6, game);
+        }
+      }
+      AudioMgr.explosion();
+      game.shake(6, 0.25);
+    }
     return true;
   },
 
@@ -185,7 +212,7 @@ const ActiveSkills = {
     // 大地震動：以自身為中心 8 方向裂縫 + AOE 擊退
     w_quake(game) {
       const player = game.player;
-      const baseRadius = 220 * (1 + (game.mut?.earthSize || 0));
+      const baseRadius = 220 * (1 + (game.mut?.earthSize || 0)) * (game.mut?.aoeMult || 1);
       const baseDmg = (60 + player.attack * 1.2) * ActiveSkills.dmgMult(game);
       // 視覺：3 層震波環 + 8 道裂縫
       game.particles.shockRing(player.x, player.y, baseRadius, '#aa6020');
@@ -350,31 +377,34 @@ const ActiveSkills = {
           }
         });
         game.schedule(delay + 0.35, () => {
+          const radMult = (game.mut?.meteorRadiusMult || 1) * (game.mut?.aoeMult || 1);
+          const expR = 130 * radMult;
           // 巨型撞擊（兩層爆炸 + 衝擊環）
-          game.particles.explosion(tx, ty, 130);
-          game.particles.explosion(tx + Utils.jitter(30), ty + Utils.jitter(30), 80);
-          game.particles.shockRing(tx, ty, 160, '#ff5020');
-          game.particles.shockRing(tx, ty, 90, '#fff');
+          game.particles.explosion(tx, ty, expR);
+          game.particles.explosion(tx + Utils.jitter(30), ty + Utils.jitter(30), expR * 0.6);
+          game.particles.shockRing(tx, ty, expR * 1.2, '#ff5020');
+          game.particles.shockRing(tx, ty, expR * 0.7, '#fff');
           // 撞擊坑（黑色圓）
           game.particles.add({
             x: tx, y: ty, vx: 0, vy: 0,
             life: 1.5, max: 1.5, color: 'rgba(40,20,10,0.5)',
-            size: 60, type: 'smoke', grow: -10
+            size: expR * 0.5, type: 'smoke', grow: -10
           });
           game.shake(7, 0.25);
           AudioMgr.explosion();
           AudioMgr.shockwave();
           for (const e of game.enemies) {
             if (!e.alive) continue;
-            if (Utils.distance(tx, ty, e.x, e.y) < 130 + e.radius) {
+            if (Utils.distance(tx, ty, e.x, e.y) < expR + e.radius) {
               e.takeDamage(baseDmg, game);
               e.applyKnockback(tx, ty, 280);
+              if (game.mut?.skillBurn) e.burnTimer = 4, e.burnDps = 14;
               game.particles.damageText(e.x, e.y - 12, baseDmg, '#ffaa33');
             }
           }
           for (const __boss of game.bosses) {
             if (!__boss || !__boss.alive) continue;
-            if (Utils.distance(tx, ty, __boss.x, __boss.y) < 130 + __boss.radius) {
+            if (Utils.distance(tx, ty, __boss.x, __boss.y) < expR + __boss.radius) {
               __boss.takeDamage(baseDmg * 0.85, game);
             }
           }
@@ -393,7 +423,7 @@ const ActiveSkills = {
     m_frost(game) {
       const player = game.player;
       const weaponMult = WEAPONS[player.currentWeapon]?.skillMult || 1;
-      const radius = 520 * Math.sqrt(weaponMult);  // 巨幅擴大
+      const radius = 520 * Math.sqrt(weaponMult) * (game.mut?.frostRadiusMult || 1) * (game.mut?.aoeMult || 1);
       const baseDmg = (110 + player.attack * 1.4) * ActiveSkills.dmgMult(game) * weaponMult;
       const freezeDur = 3 + (game.mut?.freezeExtra || 0);
 
@@ -478,6 +508,12 @@ const ActiveSkills = {
       AudioMgr.bossSpawn();
       game.shake(16, 0.55);
       Utils.bigToast('冰封新星！');
+      // 永凍連鎖:留下持續冰霜地面
+      if (game.mut?.frostGround) {
+        game.iceZones = game.iceZones || [];
+        game.iceZones.push({ x: player.x, y: player.y, radius: radius * 0.55, life: 5 });
+        game.particles.runeCircle(player.x, player.y, radius * 0.5, 5);
+      }
     },
 
     // 黑炎隕石雨:24 道巨大黑炎隕石,環繞玩家大範圍降下
@@ -486,7 +522,7 @@ const ActiveSkills = {
       const weaponMult = WEAPONS[player.currentWeapon]?.skillMult || 1;
       const count = 24 + Math.round((weaponMult - 1) * 4);
       const baseDmg = (95 + player.attack * 1.6) * ActiveSkills.dmgMult(game) * weaponMult;
-      const fieldRadius = 540;  // 巨大範圍(以玩家為中心)
+      const fieldRadius = 540 * (game.mut?.aoeMult || 1);  // 巨大範圍(以玩家為中心)
 
       // 中央天降紫黑爆閃
       game.particles.add({
@@ -633,7 +669,7 @@ const ActiveSkills = {
       const player = game.player;
       const count = 18 + (game.mut?.stormExtra || 0);
       const baseAng = player.facing;
-      const spread = Math.PI * 0.6;   // 加大到 108°
+      const spread = Math.PI * 0.6 * (game.mut?.stormSpread || 1);   // 加大到 108°,可由卡牌放寬
       const dmg = (22 + player.attack * 0.55) * ActiveSkills.dmgMult(game);
       // 第一波
       for (let i = 0; i < count; i++) {
@@ -681,6 +717,26 @@ const ActiveSkills = {
       AudioMgr.bowShoot();
       game.shake(8, 0.3);
       Utils.bigToast('箭矢風暴！');
+      // 雙重風暴:0.4 秒後再放一次
+      if (game.mut?.stormDouble) {
+        game.schedule(0.4, () => {
+          const cnt = count;
+          for (let i = 0; i < cnt; i++) {
+            const t = cnt > 1 ? (i / (cnt - 1) - 0.5) : 0;
+            const ang = baseAng + t * spread + Utils.jitter(0.05);
+            const sx2 = player.x + Math.cos(ang) * (player.radius + 8);
+            const sy2 = player.y + Math.sin(ang) * (player.radius + 8);
+            const p = new Projectile(sx2, sy2, ang, 720, dmg, 'player', 'arrow');
+            p.pierce = 2 + (game.mut?.pierceAll || 0);
+            game.projectiles.push(p);
+          }
+          game.particles.muzzleFlash(player.x + Math.cos(baseAng) * 10,
+                                      player.y + Math.sin(baseAng) * 10, baseAng, '#ffd86b');
+          game.particles.shockRing(player.x, player.y, 80, '#ffd86b');
+          AudioMgr.bowShoot();
+          game.shake(6, 0.25);
+        });
+      }
     },
 
     // 雷霆穿心：超強直線雷箭，貫穿全場
@@ -811,11 +867,12 @@ const ActiveSkills = {
           size: Utils.randomRange(8, 14), type: 'smoke', grow: 6
         });
       }
-      // 冰凍周圍敵人（範圍 280）
+      // 冰凍周圍敵人(範圍 280,可由卡牌放大)
+      const freezeR = 280 * (game.mut?.iceArrowSize || 1) * (game.mut?.aoeMult || 1);
       for (const e of game.enemies) {
         if (!e.alive) continue;
-        if (Utils.distance(player.x, player.y, e.x, e.y) < 280 + e.radius) {
-          e.frozenTimer = Math.max(e.frozenTimer || 0, 1.5);
+        if (Utils.distance(player.x, player.y, e.x, e.y) < freezeR + e.radius) {
+          e.frozenTimer = Math.max(e.frozenTimer || 0, 1.5 + (game.mut?.freezeExtra || 0));
           e.slowTimer = Math.max(e.slowTimer || 0, 2.5);
         }
       }
@@ -932,7 +989,9 @@ const ActiveSkills = {
     // 血祭斬擊:前方扇形大範圍 AOE(近半屏幕),擊殺回血
     b_recovery(game) {
       const player = game.player;
-      const range = 460 * (game.mut?.recoveryBoost ? 1.2 : 1);   // 近半屏幕
+      const range = 460 * (game.mut?.recoveryBoost ? 1.2 : 1)
+                       * (game.mut?.bloodSlashRange || 1)
+                       * (game.mut?.aoeMult || 1);
       const halfAngle = Math.PI * 0.42;                          // ~150° 扇形,接近半圓
       const baseDmg = (160 + player.attack * 2.2) * ActiveSkills.dmgMult(game);
       const facing = player.facing;
@@ -1043,8 +1102,9 @@ const ActiveSkills = {
           game.particles.damageText(__boss.x, __boss.y - 14, Math.round(baseDmg * 1.15), '#ff2030', true);
         }
       }
-      // 擊殺回血:每擊殺 +12 HP,並至少回 15
-      const heal = Math.max(15, killed * 12);
+      // 擊殺回血:每擊殺 +12 HP(可由卡牌升級),並至少回 15
+      const perKill = game.mut?.bloodSlashHeal || 12;
+      const heal = Math.max(15, killed * perKill);
       player.hp = Math.min(player.maxHp, player.hp + heal);
       if (heal > 0) game.particles.damageText(player.x, player.y - 30, '+' + heal, '#6fdd6f', true);
 
