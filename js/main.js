@@ -18,7 +18,7 @@ const App = {
       case 'settings': UI.showSettings(true); break;
       case 'controls': UI.showControls(true); break;
       case 'credits': UI.showCredits(true); break;
-      case 'saveLoad': UI.showSaveSlots(true, 'load'); break;
+      case 'saveLoad': UI.showSaveSlots(true, 'load', 'menu'); break;
       case 'achievements': UI.showAchievements(true); break;
       case 'leaderboard': UI.showLeaderboard('normal'); break;
     }
@@ -29,12 +29,19 @@ const App = {
     UI.refreshSkillNames(classId);
   },
 
-  loadSlot(slot) {
-    this.game.startNewRun('warrior', 'normal');
-    Save.load(this.game, slot);
+  async loadSlot(slot) {
+    this.game.startNewRun(CLASS_LIST[0], 'normal');
+    this.game.state = 'loading';
+    const loaded = await Save.load(this.game, slot);
+    if (!loaded) {
+      this.game.state = 'start';
+      this.go('saveLoad');
+      return false;
+    }
     UI.refreshSkillNames(this.game.player.classId);
     this.game.state = 'playing';
     UI.hideAllOverlays();
+    return true;
   }
 };
 
@@ -53,6 +60,7 @@ window.addEventListener('DOMContentLoaded', () => {
   AudioMgr.loadSettings();
   Settings.load();
   Meta.load();
+  Save.resetPreviousSavesOnce();
 
   UI.init();
   Input.init(canvas);
@@ -103,6 +111,10 @@ window.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('[data-back]').forEach(btn => {
     btn.addEventListener('click', () => { AudioMgr.click(); App.go('menu'); });
   });
+  $on('btn-save-back', 'click', () => {
+    AudioMgr.click();
+    UI.closeSaveSlots();
+  });
 
   // ===== 暫停選單 =====
   $on('btn-resume', 'click', () => { AudioMgr.click(); game.resume(); });
@@ -111,7 +123,11 @@ window.addEventListener('DOMContentLoaded', () => {
     AudioMgr.click(); game.state = 'start';
     UI.showPause(false); App.go('menu');
   });
-  $on('btn-pause-save', 'click', () => { AudioMgr.click(); UI.showSaveSlots(true, 'save'); });
+  $on('btn-pause-save', 'click', () => {
+    AudioMgr.click();
+    UI.showPause(false);
+    UI.showSaveSlots(true, 'save', 'game');
+  });
 
   // ===== 死亡 / 勝利 =====
   $on('btn-restart', 'click', () => { AudioMgr.click(); App.go('classSelect'); });
@@ -175,9 +191,11 @@ window.addEventListener('DOMContentLoaded', () => {
   // ===== 全域熱鍵 =====
   window.addEventListener('keydown', (e) => {
     const k = e.key.toLowerCase();
-    if (k === 'p' && (game.state === 'playing' || game.state === 'paused')) game.togglePause();
+    const saveScreenOpen = !UI.el.saveSlots?.classList.contains('hidden');
+    if (k === 'p' && !saveScreenOpen && (game.state === 'playing' || game.state === 'paused')) game.togglePause();
     if (k === 'escape') {
-      if (game.uiBuildOpen) { game.uiBuildOpen = false; UI.hideBuildMenu(); game.placingBuild = false; }
+      if (saveScreenOpen) UI.closeSaveSlots();
+      else if (game.uiBuildOpen) { game.uiBuildOpen = false; UI.hideBuildMenu(); game.placingBuild = false; }
       else if (game.uiSkillOpen) { game.uiSkillOpen = false; UI.hideSkillPanel(); }
       else if (game.uiShopOpen) { game.uiShopOpen = false; UI.hideShop(); }
       else if (['settings','controls','credits','saveLoad','achievements','leaderboard'].includes(App.state)) App.go('menu');

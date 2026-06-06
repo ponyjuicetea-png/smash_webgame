@@ -33,6 +33,9 @@ const UI = {
       classList: $('class-list'),
       saveSlots: $('save-slots'),
       saveList: $('save-list'),
+      saveTitle: $('save-title'),
+      saveSubtitle: $('save-subtitle'),
+      btnSaveBack: $('btn-save-back'),
       cardScreen: $('card-screen'),
       cardList: $('card-list'),
       cardWave: $('card-wave'),
@@ -333,12 +336,14 @@ const UI = {
     this.el.mainMenu?.classList.toggle('hidden', !show);
     if (show) this.updateMainMenuButtons();
   },
-  updateMainMenuButtons() {
+  async updateMainMenuButtons() {
     const btnContinue = document.getElementById('btn-continue');
     const btnDaily = document.getElementById('btn-daily');
     const btnNg = document.getElementById('btn-ngplus');
     if (btnContinue) {
-      const has = Save.hasAny();
+      btnContinue.disabled = true;
+      btnContinue.style.opacity = '0.5';
+      const has = await Save.hasAny();
       btnContinue.disabled = !has;
       btnContinue.style.opacity = has ? '1' : '0.5';
     }
@@ -403,9 +408,41 @@ const UI = {
   },
 
   // ===== 存檔槽 =====
-  showSaveSlots(show, mode = 'load') {
+  showSaveSlots(show, mode = 'load', origin = 'menu') {
+    this._saveMode = mode;
+    this._saveOrigin = origin;
     this.el.saveSlots?.classList.toggle('hidden', !show);
-    if (show) this.renderSaveSlots(mode);
+    if (!show) return;
+    if (this.el.saveTitle) {
+      this.el.saveTitle.textContent = mode === 'save' ? '手動存檔' : '讀取存檔';
+    }
+    if (this.el.saveSubtitle) {
+      this.el.saveSubtitle.textContent = mode === 'save'
+        ? '選擇存檔槽 1–3；已有紀錄的槽位會被覆蓋'
+        : '選擇要繼續遊玩的存檔紀錄';
+    }
+    this.renderSaveSlots(mode);
+  },
+  closeSaveSlots() {
+    this.el.saveSlots?.classList.add('hidden');
+    if (this._saveOrigin === 'game' && window.GAME?.state === 'paused') {
+      this.showPause(true);
+      return;
+    }
+    App.go('menu');
+  },
+  formatSaveTime(value) {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return '時間未知';
+    return new Intl.DateTimeFormat('zh-TW', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    }).format(d);
   },
   async renderSaveSlots(mode) {
     const list = this.el.saveList;
@@ -415,22 +452,28 @@ const UI = {
     for (const slot of slots) {
       const div = document.createElement('div');
       div.className = 'save-slot ' + (slot.empty ? 'empty' : '');
+      const isAutosave = slot.slot === 0;
+      if (mode === 'save' && isAutosave) div.classList.add('readonly');
       if (slot.empty) {
-        div.innerHTML = `<b>存檔 ${slot.slot}${slot.slot === 0 ? '（自動）' : ''}</b><div class="cost">空</div>`;
+        div.innerHTML = `<b>${isAutosave ? '自動存檔' : `存檔槽 ${slot.slot}`}</b>
+          <div class="cost">尚無紀錄</div>
+          <div class="save-action">${mode === 'save' ? (isAutosave ? '系統自動管理' : '點擊建立存檔') : ''}</div>`;
       } else {
-        const d = new Date(slot.time);
         const cls = CHAR_CLASSES[slot.classId];
         const src = slot.source === 'cloud' ? '<span class="cloud-tag">☁ 雲端</span>' : '<span class="local-tag">本地</span>';
-        div.innerHTML = `<b>存檔 ${slot.slot}${slot.slot === 0 ? '（自動）' : ''} ${src}</b>
+        div.innerHTML = `<b>${isAutosave ? '自動存檔' : `存檔槽 ${slot.slot}`} ${src}</b>
           <div class="cost">${cls?.name || ''}　第 ${slot.wave} 波　Lv ${slot.level}　${slot.score}分<br>
-          ${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}</div>`;
+          <span class="save-time">存檔時間：${this.formatSaveTime(slot.time)}</span></div>
+          <div class="save-action">${mode === 'save' && !isAutosave ? '點擊覆蓋此存檔' : mode === 'load' ? '點擊讀取' : '系統自動管理'}</div>`;
       }
       div.onclick = async () => {
         if (mode === 'load') {
           if (slot.empty) return;
           AudioMgr.click();
-          App.loadSlot(slot.slot);
+          div.classList.add('loading');
+          await App.loadSlot(slot.slot);
         } else {
+          if (isAutosave) return;
           AudioMgr.click();
           Save.save(window.GAME, slot.slot);
           await this.renderSaveSlots(mode);

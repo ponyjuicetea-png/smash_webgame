@@ -4,53 +4,108 @@
  * 所有方法都包了 try/catch，失敗也不會影響遊戲本體
  * ================================================================ */
 const Cloud = {
-  URL: 'https://ifdpokqieznddirqxubq.supabase.co',
-  KEY: 'sb_publishable_ph783RpTxEsuysLQijZxZA_F-VCWzhu',
-
   client: null,
   user: null,
   ready: false,
   profile: null,
+  initPromise: null,
+  _setupUserId: null,
+  _setupPromise: null,
 
   // ===== 初始化（main.js 啟動時呼叫）=====
   init() {
-    if (typeof supabase === 'undefined') {
-      console.warn('[Cloud] Supabase script 未載入，雲端功能關閉');
-      return;
-    }
-    try {
-      this.client = supabase.createClient(this.URL, this.KEY, {
-        auth: { persistSession: true, autoRefreshToken: true }
-      });
-
-      // 監聽登入狀態變化（OAuth 跳轉回來會觸發）
-      this.client.auth.onAuthStateChange(async (_event, session) => {
-        const prev = this.user;
-        this.user = session?.user || null;
-        if (this.user && !prev) {
-          await this.ensureProfile();
-          // 登入後拉雲端成就合併到本地
-          await this.mergeCloudAchievements();
-        }
-        UI.refreshCloudStatus?.(this.user, this.profile);
-      });
-
-      // 啟動時取目前 session
-      this.client.auth.getSession().then(async ({ data }) => {
-        this.user = data.session?.user || null;
+    if (this.initPromise) return this.initPromise;
+    this.initPromise = this._init()
+      .catch(e => {
+        console.warn('[Cloud] init 失敗：', e);
+        return false;
+      })
+      .finally(() => {
         this.ready = true;
-        if (!this.user) {
-          // 沒登入：自動匿名（玩家不用註冊也能用雲端）
-          await this.signInAnon();
-        } else {
-          await this.ensureProfile();
-          await this.mergeCloudAchievements();
-        }
         UI.refreshCloudStatus?.(this.user, this.profile);
       });
-    } catch (e) {
-      console.warn('[Cloud] init 失敗：', e);
+    return this.initPromise;
+  },
+
+  async _init() {
+    if (typeof supabase === 'undefined') {
+      throw new Error('Supabase script 未載入');
     }
+    const config = window.SUPABASE_CONFIG;
+    if (!config?.url || !config?.anonKey) {
+      throw new Error('缺少 js/supabase-config.js 設定');
+    }
+
+    this.client = supabase.createClient(config.url, config.anonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true
+      }
+    });
+
+    // 避免在 Supabase auth callback 內直接 await 其他 Supabase 查詢。
+    this.client.auth.onAuthStateChange((_event, session) => {
+      setTimeout(() => this.handleSession(session), 0);
+    });
+
+    const { data, error } = await this.client.auth.getSession();
+    if (error) throw error;
+    this.user = data.session?.user || null;
+
+    if (!this.user) {
+      await this.signInAnon();
+    } else {
+      await this.finishUserSetup(this.user);
+    }
+    return !!this.user;
+  },
+
+  async withTimeout(promise, fallback, timeoutMs = 5000) {
+    let timer = null;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise(resolve => {
+          timer = setTimeout(() => resolve(fallback), timeoutMs);
+        })
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  },
+
+  async waitUntilReady(timeoutMs = 5000) {
+    if (!this.initPromise) this.init();
+    await this.withTimeout(this.initPromise, false, timeoutMs);
+    return !!(this.client && this.user);
+  },
+
+  async handleSession(session) {
+    const nextUser = session?.user || null;
+    if (nextUser?.id !== this.user?.id) {
+      this.user = nextUser;
+      this.profile = null;
+      this._setupUserId = null;
+      this._setupPromise = null;
+    }
+    if (this.user) await this.finishUserSetup(this.user);
+    UI.refreshCloudStatus?.(this.user, this.profile);
+    UI.updateMainMenuButtons?.();
+  },
+
+  async finishUserSetup(user) {
+    if (!user || user.id !== this.user?.id) return;
+    if (this._setupUserId === user.id && this._setupPromise) {
+      return this._setupPromise;
+    }
+    this._setupUserId = user.id;
+    this._setupPromise = (async () => {
+      await this.ensureProfile();
+      await this.mergeCloudAchievements();
+      await Save.syncPendingToCloud?.();
+    })();
+    return this._setupPromise;
   },
 
   // 取得當前要顯示的名稱
@@ -66,15 +121,17 @@ const Cloud = {
   async ensureProfile() {
     if (!this.user || !this.client) return;
     try {
-      const { data } = await this.client.from('profiles')
+      const { data, error } = await this.client.from('profiles')
         .select('*').eq('id', this.user.id).maybeSingle();
+      if (error) throw error;
       if (data) {
         this.profile = data;
       } else {
-        const name = this.suggestName();
-        const { data: ins } = await this.client.from('profiles')
+        const name = this.suggestName().slice(0, 20);
+        const { data: ins, error: insertError } = await this.client.from('profiles')
           .upsert({ id: this.user.id, display_name: name })
           .select().single();
+        if (insertError) throw insertError;
         this.profile = ins;
       }
     } catch (e) {
@@ -84,7 +141,8 @@ const Cloud = {
 
   // 更新顯示名稱
   async updateDisplayName(name) {
-    if (!this.user || !this.client || !name) return false;
+    if (!name) return false;
+    if (!this.user && !(await this.waitUntilReady())) return false;
     try {
       const { error } = await this.client.from('profiles')
         .update({ display_name: name.slice(0, 20) }).eq('id', this.user.id);
@@ -97,13 +155,17 @@ const Cloud = {
 
   // ===== 登入 / 登出 =====
   async signInAnon() {
-    if (!this.client) return;
+    if (!this.client) return false;
     try {
       const { data, error } = await this.client.auth.signInAnonymously();
-      if (error) { console.warn('[Cloud] 匿名登入失敗：', error); return; }
+      if (error) { console.warn('[Cloud] 匿名登入失敗：', error); return false; }
       this.user = data.user;
-      await this.ensureProfile();
-    } catch (e) { console.warn(e); }
+      await this.finishUserSetup(this.user);
+      return true;
+    } catch (e) {
+      console.warn('[Cloud] 匿名登入失敗：', e);
+      return false;
+    }
   },
 
   loginDiscord() {
@@ -128,6 +190,8 @@ const Cloud = {
     await this.client.auth.signOut();
     this.user = null;
     this.profile = null;
+    this._setupUserId = null;
+    this._setupPromise = null;
     // 自動切回匿名（玩家不會「斷線」）
     await this.signInAnon();
     UI.refreshCloudStatus?.(this.user, this.profile);
@@ -138,10 +202,11 @@ const Cloud = {
   },
 
   // ===== 存檔 =====
-  async saveToCloud(slot, game) {
+  async saveToCloud(slot, gameOrData) {
     if (!this.user || !this.client) return false;
     try {
-      const data = Save.serialize(game);
+      const data = gameOrData?.player && gameOrData?.wave != null &&
+        gameOrData?.version ? gameOrData : Save.serialize(gameOrData);
       const { error } = await this.client.from('saves').upsert({
         user_id: this.user.id,
         slot,
@@ -159,24 +224,50 @@ const Cloud = {
   },
 
   async loadFromCloud(slot, game) {
-    if (!this.user || !this.client) return false;
+    const cloudSave = await this.getCloudSave(slot);
+    if (!cloudSave) return false;
     try {
-      const { data, error } = await this.client.from('saves')
-        .select('data').eq('user_id', this.user.id).eq('slot', slot).maybeSingle();
-      if (error || !data) return false;
-      Save.applyToGame(game, data.data);
+      Save.applyToGame(game, cloudSave.data);
       return true;
     } catch (e) { console.warn(e); return false; }
   },
 
-  async listCloudSaves() {
-    if (!this.user || !this.client) return [];
+  async getCloudSave(slot) {
+    if (!this.user && !(await this.waitUntilReady())) return null;
     try {
-      const { data } = await this.client.from('saves')
-        .select('slot, wave, level, class_id, score, mode, updated_at')
-        .eq('user_id', this.user.id).order('slot');
+      const result = await this.withTimeout(
+        this.client.from('saves')
+          .select('data, updated_at')
+          .eq('user_id', this.user.id).eq('slot', slot).maybeSingle(),
+        null
+      );
+      if (!result) return null;
+      const { data, error } = result;
+      if (error) throw error;
+      return data || null;
+    } catch (e) {
+      console.warn('[Cloud] getCloudSave', e);
+      return null;
+    }
+  },
+
+  async listCloudSaves() {
+    if (!this.user && !(await this.waitUntilReady())) return [];
+    try {
+      const result = await this.withTimeout(
+        this.client.from('saves')
+          .select('slot, wave, level, class_id, score, mode, updated_at')
+          .eq('user_id', this.user.id).order('slot'),
+        null
+      );
+      if (!result) return [];
+      const { data, error } = result;
+      if (error) throw error;
       return data || [];
-    } catch (e) { return []; }
+    } catch (e) {
+      console.warn('[Cloud] listCloudSaves', e);
+      return [];
+    }
   },
 
   async deleteCloud(slot) {
@@ -189,7 +280,7 @@ const Cloud = {
 
   // ===== 排行榜 =====
   async submitScore(game) {
-    if (!this.user || !this.client) return;
+    if (!this.user && !(await this.waitUntilReady())) return;
     if (!game.stats?.victory) return; // 只記錄通關
     try {
       const name = this.profile?.display_name || this.suggestName();
@@ -237,11 +328,14 @@ const Cloud = {
 
   // ===== 成就 =====
   async syncAchievement(achievementId) {
-    if (!this.user || !this.client) return;
+    if (!this.user && !(await this.waitUntilReady())) return;
     try {
       await this.client.from('achievements').upsert({
         user_id: this.user.id,
         achievement_id: achievementId
+      }, {
+        onConflict: 'user_id,achievement_id',
+        ignoreDuplicates: true
       });
     } catch (e) {}
   },

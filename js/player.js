@@ -68,7 +68,9 @@ class Player {
     const cls = CHAR_CLASSES[id];
     if (!cls) return;
     this.classId = id;
-    this.classMods = cls.starting.mods || {};
+    this.classMods = { ...(cls.starting.mods || {}) };
+    this.baseMaxHp = cls.starting.maxHp;
+    this.baseMaxMp = cls.starting.maxMp;
     this.maxHp = cls.starting.maxHp;
     this.hp = cls.starting.maxHp;
     this.maxMp = cls.starting.maxMp;
